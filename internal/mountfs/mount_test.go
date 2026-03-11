@@ -1,8 +1,10 @@
 package mountfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -66,5 +68,35 @@ func TestPrepareMountpointReplacesFile(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatalf("mountpoint is not a directory: mode=%v", info.Mode())
+	}
+}
+
+func TestIsTransportEndpointErr(t *testing.T) {
+	t.Parallel()
+
+	if !isTransportEndpointErr(syscall.ENOTCONN) {
+		t.Fatal("expected ENOTCONN to be detected as transport endpoint error")
+	}
+	if !isTransportEndpointErr(errors.New("stat x: transport endpoint is not connected")) {
+		t.Fatal("expected matching string to be detected as transport endpoint error")
+	}
+	if isTransportEndpointErr(errors.New("permission denied")) {
+		t.Fatal("did not expect unrelated error to be detected as transport endpoint error")
+	}
+}
+
+func TestStaleMountTargetsIncludesParent(t *testing.T) {
+	t.Parallel()
+
+	mountpoint := "/repo/.llmfs/mount"
+	targets := staleMountTargets(mountpoint)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(targets))
+	}
+	if targets[0] != "/repo/.llmfs/mount" {
+		t.Fatalf("unexpected first target: %s", targets[0])
+	}
+	if targets[1] != "/repo/.llmfs" {
+		t.Fatalf("unexpected second target: %s", targets[1])
 	}
 }

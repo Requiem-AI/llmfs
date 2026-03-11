@@ -117,6 +117,12 @@ func prepareMountpoint(mountpoint string) error {
 		}
 		return os.MkdirAll(mountpoint, 0o755)
 	}
+	if isTransportEndpointErr(err) {
+		if unmountErr := recoverStaleMounts(mountpoint); unmountErr != nil {
+			return fmt.Errorf("recover stale mountpoint %s: %w", mountpoint, unmountErr)
+		}
+		return nil
+	}
 	if !os.IsNotExist(err) {
 		return fmt.Errorf("check mountpoint %s: %w", mountpoint, err)
 	}
@@ -136,7 +142,7 @@ func mountWithRecovery(mountpoint string, rootNode fs.InodeEmbedder, opts *fs.Op
 	}
 
 	fmt.Fprintf(os.Stderr, "Mount failed at %s: %v\nAttempting recovery and retry...\n", mountpoint, err)
-	if unmountErr := forceUnmount(mountpoint); unmountErr != nil {
+	if unmountErr := recoverStaleMounts(mountpoint); unmountErr != nil {
 		return nil, fmt.Errorf("mount: %w (recovery unmount failed: %v)", err, unmountErr)
 	}
 	if prepErr := prepareMountpoint(mountpoint); prepErr != nil {
@@ -174,4 +180,31 @@ func forceUnmount(mountpoint string) error {
 		return retryErr
 	}
 	return err
+}
+
+func recoverStaleMounts(mountpoint string) error {
+	for _, candidate := range staleMountTargets(mountpoint) {
+		if err := forceUnmount(candidate); err != nil {
+			return err
+		}
+	}
+	if removeErr := os.RemoveAll(mountpoint); removeErr != nil && !os.IsNotExist(removeErr) {
+		return removeErr
+	}
+	return os.MkdirAll(mountpoint, 0o755)
+}
+
+func staleMountTargets(mountpoint string) []string {
+	parent := filepath.Dir(mountpoint)
+	if parent == mountpoint {
+		return []string{mountpoint}
+	}
+	return []string{mountpoint, parent}
+}
+
+func isTransportEndpointErr(err error) bool {
+	if errors.Is(err, syscall.ENOTCONN) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "transport endpoint is not connected")
 }
