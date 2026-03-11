@@ -117,6 +117,18 @@ func prepareMountpoint(mountpoint string) error {
 		}
 		return os.MkdirAll(mountpoint, 0o755)
 	}
+	if isTransportEndpointErr(err) {
+		if unmountErr := forceUnmount(mountpoint); unmountErr != nil {
+			return fmt.Errorf("recover stale mountpoint %s: %w", mountpoint, unmountErr)
+		}
+		if removeErr := os.RemoveAll(mountpoint); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("cleanup stale mountpoint %s: %w", mountpoint, removeErr)
+		}
+		if mkErr := os.MkdirAll(mountpoint, 0o755); mkErr != nil {
+			return fmt.Errorf("recreate mountpoint %s: %w", mountpoint, mkErr)
+		}
+		return nil
+	}
 	if !os.IsNotExist(err) {
 		return fmt.Errorf("check mountpoint %s: %w", mountpoint, err)
 	}
@@ -174,4 +186,11 @@ func forceUnmount(mountpoint string) error {
 		return retryErr
 	}
 	return err
+}
+
+func isTransportEndpointErr(err error) bool {
+	if errors.Is(err, syscall.ENOTCONN) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "transport endpoint is not connected")
 }
