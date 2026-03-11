@@ -12,24 +12,9 @@ import (
 
 	"github.com/pkoukk/tiktoken-go"
 
+	"llmfs/internal/appcfg"
 	"llmfs/internal/codec"
 )
-
-var textExt = map[string]struct{}{
-	".go": {}, ".md": {}, ".txt": {}, ".yaml": {}, ".yml": {}, ".json": {},
-	".toml": {}, ".xml": {}, ".html": {}, ".css": {}, ".js": {}, ".ts": {},
-	".tsx": {}, ".jsx": {}, ".py": {}, ".java": {}, ".c": {}, ".cc": {},
-	".cpp": {}, ".h": {}, ".hpp": {}, ".rs": {}, ".sh": {}, ".sql": {},
-	".proto": {}, ".ini": {}, ".cfg": {},
-}
-
-var baseCandidates = []string{
-	"package ", "import ", "func ", "return ", "if ", " else ", "for ", "range ",
-	"struct ", "interface ", "type ", "var ", "const ", " := ", " == ", " != ",
-	" <= ", " >= ", " && ", " || ", "()", "{}", "[]", "\n\t", "\n    ",
-	"\n\n", "\n- ", "\n# ", "\n## ", "\n### ", "```", "TODO", "NOTE",
-	"http://", "https://", "github.com/", "error", "context", "string", "int",
-}
 
 var wordRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]{3,}`)
 
@@ -53,12 +38,7 @@ type Options struct {
 	MaxTotalSize int
 	Format       string
 	Tokenizer    string
-}
-
-func IsEligibleFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	_, ok := textExt[ext]
-	return ok
+	Settings     appcfg.Settings
 }
 
 func BuildDictionary(opts Options) (Result, error) {
@@ -81,6 +61,9 @@ func BuildDictionary(opts Options) (Result, error) {
 	if opts.Tokenizer == "" {
 		opts.Tokenizer = "cl100k_base"
 	}
+	if len(opts.Settings.Candidates) == 0 {
+		opts.Settings = appcfg.DefaultSettings()
+	}
 
 	tk, err := tiktoken.GetEncoding(opts.Tokenizer)
 	if err != nil {
@@ -94,8 +77,7 @@ func BuildDictionary(opts Options) (Result, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == ".llmfs" || name == "node_modules" {
+			if shouldSkipDir(d.Name(), opts.Settings.SkipDirs) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -103,17 +85,11 @@ func BuildDictionary(opts Options) (Result, error) {
 		if len(files) >= opts.MaxFiles || totalBytes >= opts.MaxTotalSize {
 			return nil
 		}
-		if !IsEligibleFile(path) {
-			return nil
-		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
-		if !utf8.Valid(b) {
-			return nil
-		}
-		if len(b) == 0 {
+		if !utf8.Valid(b) || len(b) == 0 {
 			return nil
 		}
 		totalBytes += len(b)
@@ -124,11 +100,11 @@ func BuildDictionary(opts Options) (Result, error) {
 		return Result{}, err
 	}
 	if len(files) == 0 {
-		return Result{}, fmt.Errorf("no eligible text files found under %s", opts.Root)
+		return Result{}, fmt.Errorf("no eligible UTF-8 files found under %s", opts.Root)
 	}
 
-	candidates := make(map[string]struct{}, 2000)
-	for _, c := range baseCandidates {
+	candidates := make(map[string]struct{}, 4000)
+	for _, c := range opts.Settings.Candidates {
 		candidates[c] = struct{}{}
 	}
 	wordFreq := map[string]int{}
@@ -153,8 +129,8 @@ func BuildDictionary(opts Options) (Result, error) {
 		}
 		return words[i].n > words[j].n
 	})
-	if len(words) > 500 {
-		words = words[:500]
+	if len(words) > 1000 {
+		words = words[:1000]
 	}
 	for _, w := range words {
 		candidates[w.w] = struct{}{}
@@ -257,6 +233,15 @@ func BuildDictionary(opts Options) (Result, error) {
 	}, nil
 }
 
+func shouldSkipDir(name string, skipDirs []string) bool {
+	for _, s := range skipDirs {
+		if name == s {
+			return true
+		}
+	}
+	return false
+}
+
 func selectSymbols(format string, dictSize int, tk *tiktoken.Tiktoken, corpus string) (string, []string, error) {
 	if format == codec.VersionTCE1 {
 		if dictSize > len(codec.TCE1CodeAlphabet) {
@@ -271,12 +256,11 @@ func selectSymbols(format string, dictSize int, tk *tiktoken.Tiktoken, corpus st
 	if format != codec.VersionTCE2 {
 		return "", nil, fmt.Errorf("unsupported format %q", format)
 	}
-	need := dictSize + 1 // escape + codes
+	need := dictSize + 1
 	oneToken := selectOneTokenSymbols(tk, corpus, need)
 	if len(oneToken) >= need {
 		return oneToken[0], oneToken[1 : dictSize+1], nil
 	}
-
 	type cand struct {
 		s    string
 		cost int

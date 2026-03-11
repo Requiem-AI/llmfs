@@ -14,7 +14,7 @@ import (
 	"llmfs/internal/codec"
 )
 
-func Mount(root, mountpoint, cfgPath string) error {
+func Mount(root, mountpoint, cfgPath string, applyToAll bool) error {
 	_, cdc, err := codec.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", cfgPath, err)
@@ -32,8 +32,8 @@ func Mount(root, mountpoint, cfgPath string) error {
 	}
 
 	rootData := &fs.LoopbackRoot{Path: root}
-	rootData.NewNode = newTransNode(rootData, cdc)
-	rootNode := newTransNode(rootData, cdc)(rootData, nil, "", nil)
+	rootData.NewNode = newTransNode(rootData, cdc, applyToAll)
+	rootNode := newTransNode(rootData, cdc, applyToAll)(rootData, nil, "", nil)
 
 	sec := time.Second
 	opts := &fs.Options{

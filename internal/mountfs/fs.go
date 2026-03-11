@@ -4,28 +4,27 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
-	"unicode/utf8"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"llmfs/internal/codec"
-	"llmfs/internal/explorer"
 )
 
 type TransNode struct {
 	fs.LoopbackNode
-	codec *codec.Codec
+	codec          *codec.Codec
+	applyToAllFile bool
 }
 
-func newTransNode(rootData *fs.LoopbackRoot, c *codec.Codec) func(*fs.LoopbackRoot, *fs.Inode, string, *syscall.Stat_t) fs.InodeEmbedder {
+func newTransNode(rootData *fs.LoopbackRoot, c *codec.Codec, applyToAll bool) func(*fs.LoopbackRoot, *fs.Inode, string, *syscall.Stat_t) fs.InodeEmbedder {
 	return func(rd *fs.LoopbackRoot, _ *fs.Inode, _ string, _ *syscall.Stat_t) fs.InodeEmbedder {
 		return &TransNode{
-			LoopbackNode: fs.LoopbackNode{RootData: rd},
-			codec:        c,
+			LoopbackNode:   fs.LoopbackNode{RootData: rd},
+			codec:          c,
+			applyToAllFile: applyToAll,
 		}
 	}
 }
@@ -33,7 +32,7 @@ func newTransNode(rootData *fs.LoopbackRoot, c *codec.Codec) func(*fs.LoopbackRo
 var _ = (fs.NodeOpener)((*TransNode)(nil))
 
 func (n *TransNode) Open(_ context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	h := newTransFileHandle(n.realPath(), flags, n.codec, false)
+	h := newTransFileHandle(n.realPath(), flags, n.codec, false, n.applyToAllFile)
 	return h, fuse.FOPEN_DIRECT_IO, 0
 }
 
@@ -48,7 +47,7 @@ func (n *TransNode) Create(ctx context.Context, name string, flags uint32, mode 
 	if !ok {
 		return nil, nil, 0, syscall.EIO
 	}
-	h := newTransFileHandle(child.realPath(), flags, child.codec, true)
+	h := newTransFileHandle(child.realPath(), flags, child.codec, true, child.applyToAllFile)
 	return inode, h, fuseFlags | fuse.FOPEN_DIRECT_IO, 0
 }
 
@@ -58,11 +57,12 @@ func (n *TransNode) realPath() string {
 }
 
 type transFileHandle struct {
-	path     string
-	flags    uint32
-	codec    *codec.Codec
-	writable bool
-	created  bool
+	path          string
+	flags         uint32
+	codec         *codec.Codec
+	writable      bool
+	created       bool
+	applyToAllRaw bool
 
 	mu        sync.Mutex
 	prepared  bool
@@ -71,9 +71,9 @@ type transFileHandle struct {
 	buf       []byte
 }
 
-func newTransFileHandle(path string, flags uint32, c *codec.Codec, created bool) *transFileHandle {
+func newTransFileHandle(path string, flags uint32, c *codec.Codec, created bool, applyToAll bool) *transFileHandle {
 	writable := flags&syscall.O_WRONLY != 0 || flags&syscall.O_RDWR != 0
-	return &transFileHandle{path: path, flags: flags, codec: c, writable: writable, created: created}
+	return &transFileHandle{path: path, flags: flags, codec: c, writable: writable, created: created, applyToAllRaw: applyToAll}
 }
 
 var _ = (fs.FileReader)((*transFileHandle)(nil))
@@ -147,7 +147,7 @@ func (h *transFileHandle) currentViewLocked() ([]byte, syscall.Errno) {
 		}
 		return nil, fs.ToErrno(err)
 	}
-	if shouldTransform(h.path, raw) {
+	if h.applyToAllRaw {
 		return h.codec.Encode(raw), 0
 	}
 	return raw, 0
@@ -164,10 +164,7 @@ func (h *transFileHandle) prepareWriteLocked() syscall.Errno {
 		}
 		raw = []byte{}
 	}
-	h.transform = shouldTransform(h.path, raw)
-	if h.created && isTextByExtension(h.path) {
-		h.transform = true
-	}
+	h.transform = h.applyToAllRaw
 	if h.transform {
 		h.buf = h.codec.Encode(raw)
 	} else {
@@ -197,21 +194,4 @@ func (h *transFileHandle) commitLocked() syscall.Errno {
 	}
 	h.dirty = false
 	return 0
-}
-
-func shouldTransform(path string, content []byte) bool {
-	if !isTextByExtension(path) {
-		return false
-	}
-	if len(content) == 0 {
-		return true
-	}
-	if !utf8.Valid(content) {
-		return false
-	}
-	return !strings.ContainsRune(string(content), '\x00')
-}
-
-func isTextByExtension(path string) bool {
-	return explorer.IsEligibleFile(path)
 }
