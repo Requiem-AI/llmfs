@@ -38,20 +38,23 @@ LLMs are priced and limited by tokens, not bytes. `llmfs` tries to reduce token 
 # Build
 go build ./cmd/llmfs
 
-# Mount encoded view (auto-creates .llmfs settings/config/instructions if missing)
-mkdir -p /tmp/repo-encoded
-./llmfs run --root . --mountpoint /tmp/repo-encoded
+# Simplest: run with sane defaults
+# - root: current directory
+# - mountpoint: .llmfs/mount
+# - auto-creates .llmfs settings/config/instructions if missing
+./llmfs
 ```
 
-Use `/tmp/repo-encoded` as the path you expose to your LLM tooling.
+Use `.llmfs/mount` (or your chosen mountpoint) as the path you expose to your LLM tooling.
 
 ## CLI commands
 
 ```bash
+llmfs                             # same as: llmfs run --mountpoint .llmfs/mount
 llmfs explore [--root DIR] [--settings PATH]
 llmfs init [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
-llmfs mount --mountpoint DIR [--root DIR] [--config PATH] [--settings PATH]
-llmfs run --mountpoint DIR [--root DIR] [--config PATH] [--settings PATH]
+llmfs mount [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
+llmfs run [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
 llmfs encode [--config PATH] [--in FILE] [--out FILE]
 llmfs decode [--config PATH] [--in FILE] [--out FILE]
 llmfs version
@@ -140,7 +143,11 @@ Behavior notes:
 - Runs on pull requests and pushes to `main`
 - Executes tests
 - Builds Linux AMD64 binary
-- Uploads build artifact
+- Packages release tarball containing:
+  - `llmfs` binary
+  - `README.md`
+  - `examples/` config templates
+- Uploads `.tar.gz` artifact
 
 ### Release workflow
 
@@ -149,9 +156,10 @@ Behavior notes:
 - Runs on pushes to `main`
 - Computes next patch semver tag (`vX.Y.Z`)
 - Builds Linux AMD64 binary
+- Packages `.tar.gz` bundle (binary + examples)
 - Creates tag and GitHub Release
 - Uses generated release notes
-- Attaches Linux binary asset
+- Attaches release tarball asset + checksum (`.sha256`)
 
 ## Development
 
