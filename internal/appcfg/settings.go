@@ -9,19 +9,27 @@ import (
 )
 
 type Settings struct {
-	ApplyToAllFiles bool     `json:"apply_to_all_files"`
-	SkipDirs        []string `json:"skip_dirs"`
-	Candidates      []string `json:"candidates"`
-	SkipDirsFile    string   `json:"skip_dirs_file"`
-	CandidatesFile  string   `json:"candidates_file"`
+	ApplyToAllFiles bool         `json:"apply_to_all_files"`
+	SkipDirs        []string     `json:"skip_dirs"`
+	Candidates      []string     `json:"candidates"`
+	Middlewares     []Middleware `json:"middlewares"`
+	SkipDirsFile    string       `json:"skip_dirs_file"`
+	CandidatesFile  string       `json:"candidates_file"`
+}
+
+type Middleware struct {
+	Name    string         `json:"name"`
+	Enabled bool           `json:"enabled"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 type partialSettings struct {
-	ApplyToAllFiles *bool    `json:"apply_to_all_files"`
-	SkipDirs        []string `json:"skip_dirs"`
-	Candidates      []string `json:"candidates"`
-	SkipDirsFile    string   `json:"skip_dirs_file"`
-	CandidatesFile  string   `json:"candidates_file"`
+	ApplyToAllFiles *bool         `json:"apply_to_all_files"`
+	SkipDirs        []string      `json:"skip_dirs"`
+	Candidates      []string      `json:"candidates"`
+	Middlewares     *[]Middleware `json:"middlewares"`
+	SkipDirsFile    string        `json:"skip_dirs_file"`
+	CandidatesFile  string        `json:"candidates_file"`
 }
 
 func DefaultSettings() Settings {
@@ -31,7 +39,21 @@ func DefaultSettings() Settings {
 			".git", ".llmfs", "node_modules", "vendor", "dist", "build", "bin", "out", "coverage",
 			".idea", ".vscode", ".venv", "venv", "target", ".next", ".turbo",
 		},
-		Candidates:     defaultCandidates(),
+		Candidates: defaultCandidates(),
+		Middlewares: []Middleware{
+			{
+				Name:    "deny_env_dotfiles",
+				Enabled: true,
+			},
+			{
+				Name:    "redirect_env_to_agent",
+				Enabled: true,
+			},
+			{
+				Name:    "codec",
+				Enabled: true,
+			},
+		},
 		SkipDirsFile:   ".llmfs/skip_dirs.txt",
 		CandidatesFile: ".llmfs/candidates.txt",
 	}
@@ -72,6 +94,9 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 		if len(p.Candidates) > 0 {
 			cfg.Candidates = append([]string(nil), p.Candidates...)
 		}
+		if p.Middlewares != nil {
+			cfg.Middlewares = normalizeMiddlewares(*p.Middlewares)
+		}
 		if p.SkipDirsFile != "" {
 			cfg.SkipDirsFile = p.SkipDirsFile
 		}
@@ -108,6 +133,7 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 
 	cfg.SkipDirs = normalizeSet(cfg.SkipDirs)
 	cfg.Candidates = uniqueKeepOrder(cfg.Candidates)
+	cfg.Middlewares = normalizeMiddlewares(cfg.Middlewares)
 	return cfg, nil
 }
 
@@ -192,6 +218,28 @@ func uniqueKeepOrder(in []string) []string {
 		}
 		seen[v] = struct{}{}
 		out = append(out, v)
+	}
+	return out
+}
+
+func normalizeMiddlewares(in []Middleware) []Middleware {
+	if len(in) == 0 {
+		return []Middleware{}
+	}
+	out := make([]Middleware, 0, len(in))
+	for _, m := range in {
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			continue
+		}
+		normalized := Middleware{
+			Name:    name,
+			Enabled: m.Enabled,
+		}
+		if m.Options != nil {
+			normalized.Options = m.Options
+		}
+		out = append(out, normalized)
 	}
 	return out
 }

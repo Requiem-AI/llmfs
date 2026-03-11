@@ -15,6 +15,7 @@ LLMs are priced and limited by tokens, not bytes. `llmfs` tries to reduce token 
 - FUSE mount that exposes encoded file content and decodes writes back to raw files
 - Auto-generated LLM instructions file with dictionary mapping
 - Config-driven behavior for candidate patterns and skipped directories
+- Ordered middleware pipeline for pre-serve checks/transforms
 - Linux build CI + automatic versioned release workflow on `main`
 
 ## Repository layout
@@ -96,6 +97,12 @@ Example:
   "apply_to_all_files": true,
   "skip_dirs": [".git", ".llmfs", "node_modules"],
   "candidates": ["func ", "return ", "if ", " := "],
+  "middlewares": [
+    { "name": "deny_env_dotfiles", "enabled": true },
+    { "name": "redirect_env_to_agent", "enabled": true },
+    { "name": "codec", "enabled": true },
+    { "name": "deny_binary", "enabled": false }
+  ],
   "skip_dirs_file": ".llmfs/skip_dirs.txt",
   "candidates_file": ".llmfs/candidates.txt"
 }
@@ -106,6 +113,13 @@ Behavior notes:
 - `apply_to_all_files: true` means mount-time transform applies to all files, regardless of extension
 - `skip_dirs` controls directories excluded from dictionary exploration
 - `candidates` is the base candidate list used for dictionary scoring
+- `middlewares` defines ordered modules for read/write transform in FUSE:
+  - `serve` path runs in listed order
+  - `commit` path runs in reverse order
+  - `deny_env_dotfiles` blocks reads of filenames matching `.env.*`
+  - `redirect_env_to_agent` serves `.env.agent` when `.env` is read
+  - `codec` middleware now owns encode/decode behavior
+  - `deny_binary` rejects content containing NUL bytes (optional check)
 - `*_file` values allow external editable lists (default paths shown above)
 
 ## Transport files

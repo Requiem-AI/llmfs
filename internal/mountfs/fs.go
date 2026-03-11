@@ -2,6 +2,7 @@ package mountfs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,20 +11,20 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 
-	"llmfs/internal/codec"
+	"llmfs/internal/transform"
 )
 
 type TransNode struct {
 	fs.LoopbackNode
-	codec          *codec.Codec
+	pipeline       *transform.Pipeline
 	applyToAllFile bool
 }
 
-func newTransNode(rootData *fs.LoopbackRoot, c *codec.Codec, applyToAll bool) func(*fs.LoopbackRoot, *fs.Inode, string, *syscall.Stat_t) fs.InodeEmbedder {
+func newTransNode(rootData *fs.LoopbackRoot, p *transform.Pipeline, applyToAll bool) func(*fs.LoopbackRoot, *fs.Inode, string, *syscall.Stat_t) fs.InodeEmbedder {
 	return func(rd *fs.LoopbackRoot, _ *fs.Inode, _ string, _ *syscall.Stat_t) fs.InodeEmbedder {
 		return &TransNode{
 			LoopbackNode:   fs.LoopbackNode{RootData: rd},
-			codec:          c,
+			pipeline:       p,
 			applyToAllFile: applyToAll,
 		}
 	}
@@ -32,7 +33,7 @@ func newTransNode(rootData *fs.LoopbackRoot, c *codec.Codec, applyToAll bool) fu
 var _ = (fs.NodeOpener)((*TransNode)(nil))
 
 func (n *TransNode) Open(_ context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	h := newTransFileHandle(n.realPath(), flags, n.codec, false, n.applyToAllFile)
+	h := newTransFileHandle(n.realPath(), flags, n.pipeline, false, n.applyToAllFile)
 	return h, fuse.FOPEN_DIRECT_IO, 0
 }
 
@@ -47,7 +48,7 @@ func (n *TransNode) Create(ctx context.Context, name string, flags uint32, mode 
 	if !ok {
 		return nil, nil, 0, syscall.EIO
 	}
-	h := newTransFileHandle(child.realPath(), flags, child.codec, true, child.applyToAllFile)
+	h := newTransFileHandle(child.realPath(), flags, child.pipeline, true, child.applyToAllFile)
 	return inode, h, fuseFlags | fuse.FOPEN_DIRECT_IO, 0
 }
 
@@ -59,7 +60,7 @@ func (n *TransNode) realPath() string {
 type transFileHandle struct {
 	path          string
 	flags         uint32
-	codec         *codec.Codec
+	pipeline      *transform.Pipeline
 	writable      bool
 	created       bool
 	applyToAllRaw bool
@@ -71,9 +72,9 @@ type transFileHandle struct {
 	buf       []byte
 }
 
-func newTransFileHandle(path string, flags uint32, c *codec.Codec, created bool, applyToAll bool) *transFileHandle {
+func newTransFileHandle(path string, flags uint32, p *transform.Pipeline, created bool, applyToAll bool) *transFileHandle {
 	writable := flags&syscall.O_WRONLY != 0 || flags&syscall.O_RDWR != 0
-	return &transFileHandle{path: path, flags: flags, codec: c, writable: writable, created: created, applyToAllRaw: applyToAll}
+	return &transFileHandle{path: path, flags: flags, pipeline: p, writable: writable, created: created, applyToAllRaw: applyToAll}
 }
 
 var _ = (fs.FileReader)((*transFileHandle)(nil))
@@ -148,7 +149,11 @@ func (h *transFileHandle) currentViewLocked() ([]byte, syscall.Errno) {
 		return nil, fs.ToErrno(err)
 	}
 	if h.applyToAllRaw {
-		return h.codec.Encode(raw), 0
+		transformed, err := h.pipeline.Serve(h.middlewareContext(), raw)
+		if err != nil {
+			return nil, middlewareErrno(err)
+		}
+		return transformed, 0
 	}
 	return raw, 0
 }
@@ -166,7 +171,11 @@ func (h *transFileHandle) prepareWriteLocked() syscall.Errno {
 	}
 	h.transform = h.applyToAllRaw
 	if h.transform {
-		h.buf = h.codec.Encode(raw)
+		transformed, err := h.pipeline.Serve(h.middlewareContext(), raw)
+		if err != nil {
+			return middlewareErrno(err)
+		}
+		h.buf = transformed
 	} else {
 		h.buf = raw
 	}
@@ -183,9 +192,9 @@ func (h *transFileHandle) commitLocked() syscall.Errno {
 	}
 	payload := h.buf
 	if h.transform {
-		decoded, err := h.codec.Decode(payload)
+		decoded, err := h.pipeline.Commit(h.middlewareContext(), payload)
 		if err != nil {
-			return syscall.EINVAL
+			return middlewareErrno(err)
 		}
 		payload = decoded
 	}
@@ -194,4 +203,20 @@ func (h *transFileHandle) commitLocked() syscall.Errno {
 	}
 	h.dirty = false
 	return 0
+}
+
+func (h *transFileHandle) middlewareContext() transform.Context {
+	info, _ := os.Stat(h.path)
+	return transform.Context{
+		Path: h.path,
+		Info: info,
+	}
+}
+
+func middlewareErrno(err error) syscall.Errno {
+	var rejected *transform.RejectedError
+	if errors.As(err, &rejected) {
+		return syscall.EACCES
+	}
+	return syscall.EINVAL
 }
