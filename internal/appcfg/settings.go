@@ -11,9 +11,8 @@ import (
 type Settings struct {
 	ApplyToAllFiles bool         `json:"apply_to_all_files"`
 	SkipPaths       []string     `json:"skip_paths"`
-	Candidates      []string     `json:"candidates"`
+	Candidates      []string     `json:"-"`
 	Middlewares     []Middleware `json:"middlewares"`
-	SkipPathsFile   string       `json:"skip_paths_file"`
 	CandidatesFile  string       `json:"candidates_file"`
 }
 
@@ -26,9 +25,7 @@ type Middleware struct {
 type partialSettings struct {
 	ApplyToAllFiles *bool         `json:"apply_to_all_files"`
 	SkipPaths       []string      `json:"skip_paths"`
-	Candidates      []string      `json:"candidates"`
 	Middlewares     *[]Middleware `json:"middlewares"`
-	SkipPathsFile   string        `json:"skip_paths_file"`
 	CandidatesFile  string        `json:"candidates_file"`
 }
 
@@ -54,8 +51,11 @@ func DefaultSettings() Settings {
 				Name:    "codec",
 				Enabled: true,
 			},
+			{
+				Name:    "deny_binary",
+				Enabled: false,
+			},
 		},
-		SkipPathsFile:  ".llmfs/skip_paths.txt",
 		CandidatesFile: ".llmfs/candidates.txt",
 	}
 }
@@ -92,30 +92,15 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 		if len(p.SkipPaths) > 0 {
 			cfg.SkipPaths = append([]string(nil), p.SkipPaths...)
 		}
-		if len(p.Candidates) > 0 {
-			cfg.Candidates = append([]string(nil), p.Candidates...)
-		}
 		if p.Middlewares != nil {
 			cfg.Middlewares = normalizeMiddlewares(*p.Middlewares)
-		}
-		if p.SkipPathsFile != "" {
-			cfg.SkipPathsFile = p.SkipPathsFile
 		}
 		if p.CandidatesFile != "" {
 			cfg.CandidatesFile = p.CandidatesFile
 		}
 	}
 
-	skipPathsFile := resolve(root, cfg.SkipPathsFile)
 	candFile := resolve(root, cfg.CandidatesFile)
-	if _, err := os.Stat(skipPathsFile); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(skipPathsFile), 0o755); err != nil {
-			return Settings{}, err
-		}
-		if err := os.WriteFile(skipPathsFile, []byte(strings.Join(cfg.SkipPaths, "\n")+"\n"), 0o644); err != nil {
-			return Settings{}, err
-		}
-	}
 	if _, err := os.Stat(candFile); os.IsNotExist(err) {
 		if err := os.MkdirAll(filepath.Dir(candFile), 0o755); err != nil {
 			return Settings{}, err
@@ -123,9 +108,6 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 		if err := os.WriteFile(candFile, []byte(strings.Join(cfg.Candidates, "\n")+"\n"), 0o644); err != nil {
 			return Settings{}, err
 		}
-	}
-	if lines, err := readLines(skipPathsFile); err == nil && len(lines) > 0 {
-		cfg.SkipPaths = lines
 	}
 	if lines, err := readLines(candFile); err == nil && len(lines) > 0 {
 		cfg.Candidates = lines
@@ -138,15 +120,8 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 }
 
 func writeDefaultFiles(root string, cfg Settings) error {
-	skipPathsFile := resolve(root, cfg.SkipPathsFile)
 	candFile := resolve(root, cfg.CandidatesFile)
-	if err := os.MkdirAll(filepath.Dir(skipPathsFile), 0o755); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(candFile), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(skipPathsFile, []byte(strings.Join(cfg.SkipPaths, "\n")+"\n"), 0o644); err != nil {
 		return err
 	}
 	if err := os.WriteFile(candFile, []byte(strings.Join(cfg.Candidates, "\n")+"\n"), 0o644); err != nil {

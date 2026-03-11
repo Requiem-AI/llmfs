@@ -92,7 +92,6 @@ llmfs version
 
 - `.llmfs/settings.json`
 - `.llmfs/candidates.txt`
-- `.llmfs/skip_paths.txt`
 
 Tracked examples for PRs/docs live in [`examples/`](./examples):
 
@@ -107,15 +106,39 @@ Example:
 ```json
 {
   "apply_to_all_files": true,
-  "skip_paths": [".git", ".llmfs", "node_modules", "*.lock", "*.min.js", "*.png"],
-  "candidates": ["func ", "return ", "if ", " := "],
+  "skip_paths": [
+    ".git",
+    ".llmfs",
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "bin",
+    "out",
+    "coverage",
+    ".idea",
+    ".vscode",
+    ".venv",
+    "venv",
+    "target",
+    ".next",
+    ".turbo",
+    "*.lock",
+    "*.min.js",
+    "*.map",
+    "*.svg",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.webp",
+    "*.pdf"
+  ],
   "middlewares": [
     { "name": "deny_env_dotfiles", "enabled": true },
     { "name": "redirect_env_to_agent", "enabled": true },
     { "name": "codec", "enabled": true },
     { "name": "deny_binary", "enabled": false }
   ],
-  "skip_paths_file": ".llmfs/skip_paths.txt",
   "candidates_file": ".llmfs/candidates.txt"
 }
 ```
@@ -124,7 +147,7 @@ Behavior notes:
 
 - `apply_to_all_files: true` means mount-time transform applies to all files, regardless of extension
 - `skip_paths` supports gitignore-like path patterns for both files and directories (`name`, `dir/`, `*.ext`, `path/to/file`, and optional `!` negate)
-- `candidates` is the base candidate list used for dictionary scoring
+- dictionary candidates are sourced from `candidates_file` (`.llmfs/candidates.txt` by default)
 - `middlewares` defines ordered modules for read/write transform in FUSE:
   - `serve` path runs in listed order
   - `commit` path runs in reverse order
@@ -132,7 +155,7 @@ Behavior notes:
   - `redirect_env_to_agent` serves `.env.agent` when `.env` is read
   - `codec` middleware now owns encode/decode behavior
   - `deny_binary` rejects content containing NUL bytes (optional check)
-- `*_file` values allow external editable lists (default paths shown above)
+- `candidates_file` allows external editable candidate list (default path shown above)
 
 Verbose scan output:
 

@@ -97,27 +97,7 @@ func runExplore(args []string, writeFiles bool) error {
 		Tokenizer: *tokenizer,
 		Verbose:   *verbose,
 		Settings:  settings,
-		Progress: func(p explorer.Progress) {
-			statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d|%s", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total, p.Path)
-			if statusKey == lastStatus {
-				return
-			}
-			lastStatus = statusKey
-			progress := ""
-			if p.Total > 0 {
-				progress = fmt.Sprintf(" [%d/%d]", p.Current, p.Total)
-			}
-			if p.Path != "" {
-				fmt.Printf("  [%s] %s%s %s (%d files, %s)\n", p.Phase, p.Message, progress, p.Path, p.FilesScanned, humanBytes(p.BytesScanned))
-				return
-			}
-			switch p.Phase {
-			case "scan", "evaluate", "analyze", "score":
-				fmt.Printf("  [%s] %s%s (%d files, %s)\n", p.Phase, p.Message, progress, p.FilesScanned, humanBytes(p.BytesScanned))
-			default:
-				fmt.Printf("  [%s] %s\n", p.Phase, p.Message)
-			}
-		},
+		Progress:  makeProgressPrinter(&lastStatus),
 	})
 	if err != nil {
 		return err
@@ -127,13 +107,7 @@ func runExplore(args []string, writeFiles bool) error {
 		return nil
 	}
 	cfg := codec.BuildConfig(result.Entries, result.Version, result.Escape, result.Codes, len(result.Entries))
-	if err := codec.SaveConfig(*configPath, cfg); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(*instructionsPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(*instructionsPath, []byte(buildInstructions(cfg)), 0o644); err != nil {
+	if err := writeGeneratedFiles(*configPath, *instructionsPath, cfg); err != nil {
 		return err
 	}
 	fmt.Printf("\nWrote config: %s\nWrote instructions: %s\n", *configPath, *instructionsPath)
@@ -198,43 +172,54 @@ func ensureConfig(root, configPath string, settings appcfg.Settings, verbose boo
 		DictSize:  0,
 		Verbose:   verbose,
 		Settings:  settings,
-		Progress: func(p explorer.Progress) {
-			statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d|%s", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total, p.Path)
-			if statusKey == lastStatus {
-				return
-			}
-			lastStatus = statusKey
-			progress := ""
-			if p.Total > 0 {
-				progress = fmt.Sprintf(" [%d/%d]", p.Current, p.Total)
-			}
-			if p.Path != "" {
-				fmt.Printf("  [%s] %s%s %s (%d files, %s)\n", p.Phase, p.Message, progress, p.Path, p.FilesScanned, humanBytes(p.BytesScanned))
-				return
-			}
-			switch p.Phase {
-			case "scan", "evaluate", "analyze", "score":
-				fmt.Printf("  [%s] %s%s (%d files, %s)\n", p.Phase, p.Message, progress, p.FilesScanned, humanBytes(p.BytesScanned))
-			default:
-				fmt.Printf("  [%s] %s\n", p.Phase, p.Message)
-			}
-		},
+		Progress:  makeProgressPrinter(&lastStatus),
 	})
 	if err != nil {
 		return err
 	}
 	cfg := codec.BuildConfig(result.Entries, result.Version, result.Escape, result.Codes, len(result.Entries))
-	if err := codec.SaveConfig(configPath, cfg); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(defaultInitPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(defaultInitPath, []byte(buildInstructions(cfg)), 0o644); err != nil {
+	if err := writeGeneratedFiles(configPath, defaultInitPath, cfg); err != nil {
 		return err
 	}
 	fmt.Printf("Wrote config: %s\nWrote instructions: %s\n", configPath, defaultInitPath)
 	fmt.Printf("Dictionary ready in %s\n", time.Since(start).Round(time.Second))
+	return nil
+}
+
+func makeProgressPrinter(lastStatus *string) func(explorer.Progress) {
+	return func(p explorer.Progress) {
+		statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d|%s", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total, p.Path)
+		if statusKey == *lastStatus {
+			return
+		}
+		*lastStatus = statusKey
+		progress := ""
+		if p.Total > 0 {
+			progress = fmt.Sprintf(" [%d/%d]", p.Current, p.Total)
+		}
+		if p.Path != "" {
+			fmt.Printf("  [%s] %s%s %s (%d files, %s)\n", p.Phase, p.Message, progress, p.Path, p.FilesScanned, humanBytes(p.BytesScanned))
+			return
+		}
+		switch p.Phase {
+		case "scan", "evaluate", "analyze", "score":
+			fmt.Printf("  [%s] %s%s (%d files, %s)\n", p.Phase, p.Message, progress, p.FilesScanned, humanBytes(p.BytesScanned))
+		default:
+			fmt.Printf("  [%s] %s\n", p.Phase, p.Message)
+		}
+	}
+}
+
+func writeGeneratedFiles(configPath, instructionsPath string, cfg codec.Config) error {
+	if err := codec.SaveConfig(configPath, cfg); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(instructionsPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(instructionsPath, []byte(buildInstructions(cfg)), 0o644); err != nil {
+		return err
+	}
 	return nil
 }
 
