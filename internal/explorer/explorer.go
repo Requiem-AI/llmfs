@@ -48,6 +48,8 @@ type Progress struct {
 	Message      string
 	FilesScanned int
 	BytesScanned int
+	Current      int
+	Total        int
 }
 
 func BuildDictionary(opts Options) (Result, error) {
@@ -141,9 +143,21 @@ func BuildDictionary(opts Options) (Result, error) {
 		candidates[c] = struct{}{}
 	}
 	wordFreq := map[string]int{}
-	for _, b := range files {
+	lastAnalyzeProgress := time.Now()
+	for i, b := range files {
 		for _, w := range wordRe.FindAllString(string(b), -1) {
 			wordFreq[w]++
+		}
+		if (i+1)%10 == 0 || time.Since(lastAnalyzeProgress) >= 2*time.Second {
+			reportProgress(opts, Progress{
+				Phase:        "analyze",
+				Message:      "Extracting frequent words",
+				FilesScanned: i + 1,
+				BytesScanned: totalBytes,
+				Current:      i + 1,
+				Total:        len(files),
+			})
+			lastAnalyzeProgress = time.Now()
 		}
 	}
 	type wf struct {
@@ -172,10 +186,22 @@ func BuildDictionary(opts Options) (Result, error) {
 
 	blobParts := make([]string, 0, len(files))
 	rawTokens := 0
-	for _, b := range files {
+	lastTokenizeProgress := time.Now()
+	for i, b := range files {
 		s := string(b)
 		blobParts = append(blobParts, s)
 		rawTokens += len(tk.Encode(s, nil, nil))
+		if (i+1)%10 == 0 || time.Since(lastTokenizeProgress) >= 2*time.Second {
+			reportProgress(opts, Progress{
+				Phase:        "analyze",
+				Message:      "Tokenizing source files",
+				FilesScanned: i + 1,
+				BytesScanned: totalBytes,
+				Current:      i + 1,
+				Total:        len(files),
+			})
+			lastTokenizeProgress = time.Now()
+		}
 	}
 	blob := strings.Join(blobParts, "\n")
 
@@ -199,7 +225,11 @@ func BuildDictionary(opts Options) (Result, error) {
 		gain int
 	}
 	scores := make([]scored, 0, len(candidates))
+	totalCandidates := len(candidates)
+	processedCandidates := 0
+	lastScoreProgress := time.Now()
 	for cand := range candidates {
+		processedCandidates++
 		if len(cand) < 2 || strings.Contains(cand, escape) {
 			continue
 		}
@@ -211,6 +241,17 @@ func BuildDictionary(opts Options) (Result, error) {
 		gain := occ * (from - replTokenCost)
 		if gain > 0 {
 			scores = append(scores, scored{text: cand, gain: gain})
+		}
+		if processedCandidates%100 == 0 || time.Since(lastScoreProgress) >= 2*time.Second {
+			reportProgress(opts, Progress{
+				Phase:        "score",
+				Message:      "Evaluating dictionary candidates",
+				FilesScanned: len(files),
+				BytesScanned: totalBytes,
+				Current:      processedCandidates,
+				Total:        totalCandidates,
+			})
+			lastScoreProgress = time.Now()
 		}
 	}
 	sort.Slice(scores, func(i, j int) bool {

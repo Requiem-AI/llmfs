@@ -165,7 +165,7 @@ func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 	fmt.Printf("Config not found at %s, generating defaults (tce2)\n", configPath)
 	fmt.Printf("Preparing dictionary from %s\n", root)
 	start := time.Now()
-	lastPhase := ""
+	lastStatus := ""
 	result, err := explorer.BuildDictionary(explorer.Options{
 		Root:      root,
 		Format:    codec.VersionTCE2,
@@ -173,13 +173,18 @@ func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 		DictSize:  0,
 		Settings:  settings,
 		Progress: func(p explorer.Progress) {
-			if p.Phase == lastPhase && p.Phase != "scan" && p.Phase != "evaluate" {
+			statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total)
+			if statusKey == lastStatus {
 				return
 			}
-			lastPhase = p.Phase
+			lastStatus = statusKey
+			progress := ""
+			if p.Total > 0 {
+				progress = fmt.Sprintf(" [%d/%d]", p.Current, p.Total)
+			}
 			switch p.Phase {
-			case "scan", "evaluate":
-				fmt.Printf("  [%s] %s (%d files, %s)\n", p.Phase, p.Message, p.FilesScanned, humanBytes(p.BytesScanned))
+			case "scan", "evaluate", "analyze", "score":
+				fmt.Printf("  [%s] %s%s (%d files, %s)\n", p.Phase, p.Message, progress, p.FilesScanned, humanBytes(p.BytesScanned))
 			default:
 				fmt.Printf("  [%s] %s\n", p.Phase, p.Message)
 			}
