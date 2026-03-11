@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -177,9 +178,43 @@ func forceUnmount(mountpoint string) error {
 		if retryErr == nil || errors.Is(retryErr, syscall.EINVAL) || errors.Is(retryErr, syscall.ENOENT) {
 			return nil
 		}
+		if fallbackErr := forceUnmountWithCmd(mountpoint); fallbackErr == nil {
+			return nil
+		}
 		return retryErr
 	}
 	return err
+}
+
+func forceUnmountWithCmd(mountpoint string) error {
+	candidates := [][]string{
+		{"fusermount3", "-u", "-z", mountpoint},
+		{"fusermount", "-u", "-z", mountpoint},
+		{"umount", "-l", mountpoint},
+	}
+
+	var lastErr error
+	foundHelper := false
+	for _, cmdArgs := range candidates {
+		if _, err := exec.LookPath(cmdArgs[0]); err != nil {
+			continue
+		}
+		foundHelper = true
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		out, err := cmd.CombinedOutput()
+		if err == nil || isUnmountNoopOutput(out) {
+			return nil
+		}
+		lastErr = fmt.Errorf("%s failed: %w (%s)", cmdArgs[0], err, strings.TrimSpace(string(out)))
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+	if !foundHelper {
+		return errors.New("no unmount helper found (tried fusermount3, fusermount, umount)")
+	}
+	return errors.New("all unmount helper commands failed")
 }
 
 func recoverStaleMounts(mountpoint string) error {
@@ -207,4 +242,15 @@ func isTransportEndpointErr(err error) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "transport endpoint is not connected")
+}
+
+func isUnmountNoopOutput(out []byte) bool {
+	msg := strings.ToLower(strings.TrimSpace(string(out)))
+	if msg == "" {
+		return false
+	}
+	return strings.Contains(msg, "not mounted") ||
+		strings.Contains(msg, "not found in /etc/mtab") ||
+		strings.Contains(msg, "no mount point specified") ||
+		strings.Contains(msg, "transport endpoint is not connected")
 }
