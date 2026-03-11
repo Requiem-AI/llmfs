@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"llmfs/internal/appcfg"
 	"llmfs/internal/codec"
@@ -161,13 +162,28 @@ func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 	if _, err := os.Stat(configPath); err == nil {
 		return nil
 	}
-	fmt.Printf("Config not found at %s, generating defaults (tce2)...\n", configPath)
+	fmt.Printf("Config not found at %s, generating defaults (tce2)\n", configPath)
+	fmt.Printf("Preparing dictionary from %s\n", root)
+	start := time.Now()
+	lastPhase := ""
 	result, err := explorer.BuildDictionary(explorer.Options{
 		Root:      root,
 		Format:    codec.VersionTCE2,
 		Tokenizer: "cl100k_base",
 		DictSize:  0,
 		Settings:  settings,
+		Progress: func(p explorer.Progress) {
+			if p.Phase == lastPhase && p.Phase != "scan" && p.Phase != "evaluate" {
+				return
+			}
+			lastPhase = p.Phase
+			switch p.Phase {
+			case "scan", "evaluate":
+				fmt.Printf("  [%s] %s (%d files, %s)\n", p.Phase, p.Message, p.FilesScanned, humanBytes(p.BytesScanned))
+			default:
+				fmt.Printf("  [%s] %s\n", p.Phase, p.Message)
+			}
+		},
 	})
 	if err != nil {
 		return err
@@ -183,7 +199,21 @@ func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 		return err
 	}
 	fmt.Printf("Wrote config: %s\nWrote instructions: %s\n", configPath, defaultInitPath)
+	fmt.Printf("Dictionary ready in %s\n", time.Since(start).Round(time.Second))
 	return nil
+}
+
+func humanBytes(n int) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := unit, 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func runEncodeDecode(args []string, encode bool) error {

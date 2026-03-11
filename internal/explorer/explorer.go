@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -39,9 +40,18 @@ type Options struct {
 	Format       string
 	Tokenizer    string
 	Settings     appcfg.Settings
+	Progress     func(Progress)
+}
+
+type Progress struct {
+	Phase        string
+	Message      string
+	FilesScanned int
+	BytesScanned int
 }
 
 func BuildDictionary(opts Options) (Result, error) {
+	reportProgress(opts, Progress{Phase: "setup", Message: "Preparing dictionary build"})
 	if opts.DictSize <= 0 {
 		if opts.Format == codec.VersionTCE1 {
 			opts.DictSize = 62
@@ -69,9 +79,11 @@ func BuildDictionary(opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("load tokenizer %q: %w", opts.Tokenizer, err)
 	}
+	reportProgress(opts, Progress{Phase: "scan", Message: "Scanning repository files"})
 
 	files := make([][]byte, 0, 256)
 	totalBytes := 0
+	lastScanProgress := time.Now()
 	err = filepath.WalkDir(opts.Root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -94,15 +106,36 @@ func BuildDictionary(opts Options) (Result, error) {
 		}
 		totalBytes += len(b)
 		files = append(files, b)
+		if len(files)%100 == 0 || time.Since(lastScanProgress) >= 2*time.Second {
+			reportProgress(opts, Progress{
+				Phase:        "scan",
+				Message:      "Reading files",
+				FilesScanned: len(files),
+				BytesScanned: totalBytes,
+			})
+			lastScanProgress = time.Now()
+		}
 		return nil
 	})
 	if err != nil {
 		return Result{}, err
 	}
+	reportProgress(opts, Progress{
+		Phase:        "scan",
+		Message:      "Repository scan complete",
+		FilesScanned: len(files),
+		BytesScanned: totalBytes,
+	})
 	if len(files) == 0 {
 		return Result{}, fmt.Errorf("no eligible UTF-8 files found under %s", opts.Root)
 	}
 
+	reportProgress(opts, Progress{
+		Phase:        "analyze",
+		Message:      "Collecting candidate dictionary entries",
+		FilesScanned: len(files),
+		BytesScanned: totalBytes,
+	})
 	candidates := make(map[string]struct{}, 4000)
 	for _, c := range opts.Settings.Candidates {
 		candidates[c] = struct{}{}
@@ -146,6 +179,12 @@ func BuildDictionary(opts Options) (Result, error) {
 	}
 	blob := strings.Join(blobParts, "\n")
 
+	reportProgress(opts, Progress{
+		Phase:        "score",
+		Message:      "Scoring candidates for token reduction",
+		FilesScanned: len(files),
+		BytesScanned: totalBytes,
+	})
 	escape, codes, err := selectSymbols(opts.Format, opts.DictSize, tk, blob)
 	if err != nil {
 		return Result{}, err
@@ -203,10 +242,26 @@ func BuildDictionary(opts Options) (Result, error) {
 		return Result{}, err
 	}
 
+	reportProgress(opts, Progress{
+		Phase:        "evaluate",
+		Message:      "Measuring encoded token savings",
+		FilesScanned: len(files),
+		BytesScanned: totalBytes,
+	})
 	encodedTokens := 0
-	for _, b := range files {
+	lastEvalProgress := time.Now()
+	for i, b := range files {
 		enc := cdc.Encode(b)
 		encodedTokens += len(tk.Encode(string(enc), nil, nil))
+		if (i+1)%100 == 0 || time.Since(lastEvalProgress) >= 2*time.Second {
+			reportProgress(opts, Progress{
+				Phase:        "evaluate",
+				Message:      "Evaluating compression impact",
+				FilesScanned: i + 1,
+				BytesScanned: totalBytes,
+			})
+			lastEvalProgress = time.Now()
+		}
 	}
 
 	reduction := 0.0
@@ -219,7 +274,7 @@ func BuildDictionary(opts Options) (Result, error) {
 		usedCodes = append(usedCodes, e.Code)
 	}
 
-	return Result{
+	result := Result{
 		Root:           opts.Root,
 		FilesScanned:   len(files),
 		BytesScanned:   totalBytes,
@@ -230,7 +285,14 @@ func BuildDictionary(opts Options) (Result, error) {
 		Version:        opts.Format,
 		Escape:         escape,
 		Codes:          usedCodes,
-	}, nil
+	}
+	reportProgress(opts, Progress{
+		Phase:        "done",
+		Message:      "Dictionary build complete",
+		FilesScanned: result.FilesScanned,
+		BytesScanned: result.BytesScanned,
+	})
+	return result, nil
 }
 
 func shouldSkipDir(name string, skipDirs []string) bool {
@@ -325,4 +387,11 @@ func selectOneTokenSymbols(tk *tiktoken.Tiktoken, corpus string, need int) []str
 		out = append(out, s)
 	}
 	return out
+}
+
+func reportProgress(opts Options, p Progress) {
+	if opts.Progress == nil {
+		return
+	}
+	opts.Progress(p)
 }

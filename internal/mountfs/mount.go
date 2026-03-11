@@ -66,6 +66,7 @@ func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
 	if err != nil {
 		return fmt.Errorf("mount: %w", err)
 	}
+	fmt.Printf("Mounted and ready at %s (source: %s). Press Ctrl+C to unmount.\n", mountpoint, root)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
