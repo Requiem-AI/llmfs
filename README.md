@@ -78,6 +78,12 @@ llmfs version
 - `.llmfs/candidates.txt`
 - `.llmfs/skip_dirs.txt`
 
+Tracked examples for PRs/docs live in [`examples/`](./examples):
+
+- `examples/settings.example.json`
+- `examples/codec-config.tce2.example.json`
+- `examples/codec-config.tce1.example.json`
+
 ### `.llmfs/settings.json`
 
 Example:

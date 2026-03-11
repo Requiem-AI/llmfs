@@ -1,0 +1,22 @@
+{
+  "version": "tce2",
+  "escape": "$",
+  "entries": [
+    {
+      "code": "@",
+      "value": "func "
+    },
+    {
+      "code": "^",
+      "value": "return "
+    },
+    {
+      "code": "¡",
+      "value": " := "
+    },
+    {
+      "code": "£",
+      "value": "if "
+    }
+  ]
+}
