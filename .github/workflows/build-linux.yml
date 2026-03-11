@@ -34,10 +34,21 @@ jobs:
           GOARCH: amd64
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags='-s -w' -o dist/llmfs-linux-amd64 ./cmd/llmfs
+          go build -trimpath -ldflags='-s -w' -o dist/llmfs ./cmd/llmfs
+
+      - name: Package release tarball
+        run: |
+          set -euo pipefail
+          pkg_dir="dist/llmfs-linux-amd64"
+          mkdir -p "${pkg_dir}"
+          cp dist/llmfs "${pkg_dir}/llmfs"
+          cp README.md "${pkg_dir}/README.md"
+          mkdir -p "${pkg_dir}/examples"
+          cp -R examples/. "${pkg_dir}/examples/"
+          tar -C dist -czf dist/llmfs-linux-amd64.tar.gz llmfs-linux-amd64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: llmfs-linux-amd64
-          path: dist/llmfs-linux-amd64
+          name: llmfs-linux-amd64-tarball
+          path: dist/llmfs-linux-amd64.tar.gz

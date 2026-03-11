@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"llmfs/internal/appcfg"
 	"llmfs/internal/codec"
 	"llmfs/internal/explorer"
 	"llmfs/internal/mountfs"
@@ -15,14 +16,15 @@ import (
 const (
 	defaultConfigPath = ".llmfs/config.json"
 	defaultInitPath   = ".llmfs/INIT_INSTRUCTIONS.md"
+	defaultSettings   = ".llmfs/settings.json"
 )
 
 var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+		must(runMount([]string{}))
+		return
 	}
 
 	switch os.Args[1] {
@@ -50,10 +52,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `llmfs: token-optimized LLM filesystem bridge
 
 Usage:
-  llmfs explore [--root DIR]
-  llmfs init [--root DIR] [--config PATH] [--instructions PATH]
-  llmfs mount --mountpoint DIR [--root DIR] [--config PATH]
-  llmfs run --mountpoint DIR [--root DIR] [--config PATH]
+  llmfs                             (same as: llmfs run, default mountpoint .llmfs/mount)
+  llmfs explore [--root DIR] [--settings PATH]
+  llmfs init [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
+  llmfs mount [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
+  llmfs run [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
   llmfs version
   llmfs encode [--config PATH] [--in FILE] [--out FILE]
   llmfs decode [--config PATH] [--in FILE] [--out FILE]
@@ -75,7 +78,12 @@ func runExplore(args []string, writeFiles bool) error {
 	tokenizer := fs.String("tokenizer", "cl100k_base", "tokenizer name for optimization (advanced)")
 	configPath := fs.String("config", defaultConfigPath, "config output path")
 	instructionsPath := fs.String("instructions", defaultInitPath, "LLM init instructions output path")
+	settingsPath := fs.String("settings", defaultSettings, "settings file path")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	settings, err := appcfg.LoadOrInit(*root, *settingsPath)
+	if err != nil {
 		return err
 	}
 	result, err := explorer.BuildDictionary(explorer.Options{
@@ -83,6 +91,7 @@ func runExplore(args []string, writeFiles bool) error {
 		DictSize:  *dictSize,
 		Format:    *format,
 		Tokenizer: *tokenizer,
+		Settings:  settings,
 	})
 	if err != nil {
 		return err
@@ -126,22 +135,28 @@ func printResult(result explorer.Result) {
 func runMount(args []string) error {
 	fs := flag.NewFlagSet("mount", flag.ContinueOnError)
 	root := fs.String("root", ".", "repository root")
-	mountpoint := fs.String("mountpoint", "", "mount destination (required)")
+	mountpoint := fs.String("mountpoint", ".llmfs/mount", "mount destination")
 	configPath := fs.String("config", defaultConfigPath, "config path")
+	settingsPath := fs.String("settings", defaultSettings, "settings file path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(*mountpoint) == "" {
-		return fmt.Errorf("--mountpoint is required")
+	*mountpoint = strings.TrimSpace(*mountpoint)
+	if *mountpoint == "" {
+		*mountpoint = ".llmfs/mount"
 	}
-	if err := ensureConfig(*root, *configPath); err != nil {
+	settings, err := appcfg.LoadOrInit(*root, *settingsPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureConfig(*root, *configPath, settings); err != nil {
 		return err
 	}
 	fmt.Printf("Mounting encoded view of %s at %s\n", *root, *mountpoint)
-	return mountfs.Mount(*root, *mountpoint, *configPath)
+	return mountfs.Mount(*root, *mountpoint, *configPath, settings.ApplyToAllFiles)
 }
 
-func ensureConfig(root, configPath string) error {
+func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 	if _, err := os.Stat(configPath); err == nil {
 		return nil
 	}
@@ -151,6 +166,7 @@ func ensureConfig(root, configPath string) error {
 		Format:    codec.VersionTCE2,
 		Tokenizer: "cl100k_base",
 		DictSize:  0,
+		Settings:  settings,
 	})
 	if err != nil {
 		return err

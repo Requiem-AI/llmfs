@@ -50,7 +50,19 @@ jobs:
           VERSION: ${{ steps.version.outputs.next_tag }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/llmfs-linux-amd64 ./cmd/llmfs
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/llmfs ./cmd/llmfs
+
+      - name: Package release tarball
+        run: |
+          set -euo pipefail
+          pkg_dir="dist/llmfs-linux-amd64"
+          mkdir -p "${pkg_dir}"
+          cp dist/llmfs "${pkg_dir}/llmfs"
+          cp README.md "${pkg_dir}/README.md"
+          mkdir -p "${pkg_dir}/examples"
+          cp -R examples/. "${pkg_dir}/examples/"
+          tar -C dist -czf dist/llmfs-linux-amd64.tar.gz llmfs-linux-amd64
+          shasum -a 256 dist/llmfs-linux-amd64.tar.gz > dist/llmfs-linux-amd64.tar.gz.sha256
 
       - name: Create tag
         run: |
@@ -63,4 +75,5 @@ jobs:
           tag_name: ${{ steps.version.outputs.next_tag }}
           generate_release_notes: true
           files: |
-            dist/llmfs-linux-amd64
+            dist/llmfs-linux-amd64.tar.gz
+            dist/llmfs-linux-amd64.tar.gz.sha256

@@ -1,0 +1,22 @@
+{
+  "version": "tce1",
+  "escape": "~",
+  "entries": [
+    {
+      "code": "0",
+      "value": "func "
+    },
+    {
+      "code": "1",
+      "value": "return "
+    },
+    {
+      "code": "2",
+      "value": " := "
+    },
+    {
+      "code": "3",
+      "value": "if "
+    }
+  ]
+}
