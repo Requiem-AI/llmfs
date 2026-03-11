@@ -50,14 +50,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.next_tag }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/llmfs-linux-amd64 ./cmd/llmfs
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/llmfs ./cmd/llmfs
 
       - name: Package release tarball
         run: |
           set -euo pipefail
           pkg_dir="dist/llmfs-linux-amd64"
           mkdir -p "${pkg_dir}"
-          cp dist/llmfs-linux-amd64 "${pkg_dir}/llmfs"
+          cp dist/llmfs "${pkg_dir}/llmfs"
           cp README.md "${pkg_dir}/README.md"
           mkdir -p "${pkg_dir}/examples"
           cp -R examples/. "${pkg_dir}/examples/"
