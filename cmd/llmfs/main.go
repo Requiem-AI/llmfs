@@ -11,6 +11,7 @@ import (
 	"llmfs/internal/appcfg"
 	"llmfs/internal/codec"
 	"llmfs/internal/explorer"
+	"llmfs/internal/middleware/defaults"
 	"llmfs/internal/mountfs"
 	"llmfs/internal/transform"
 )
@@ -254,7 +255,7 @@ func runEncodeDecode(args []string, encode bool) error {
 	}
 	pipeline, err := transform.NewPipeline(
 		[]transform.ModuleConfig{{Name: "codec", Enabled: true}},
-		transform.NewDefaultRegistry(cdc),
+		defaults.NewRegistry(cdc),
 	)
 	if err != nil {
 		return err

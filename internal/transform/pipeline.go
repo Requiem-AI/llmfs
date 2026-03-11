@@ -79,20 +79,11 @@ func (p *Pipeline) Commit(ctx Context, content []byte) ([]byte, error) {
 
 func (p *Pipeline) run(ctx Context, stage Stage, content []byte, reverse bool) ([]byte, error) {
 	current := append([]byte(nil), content...)
-	if !reverse {
-		for _, m := range p.modules {
-			result, err := handleSafely(m, ctx, stage, current)
-			if err != nil {
-				return nil, fmt.Errorf("middleware %q: %w", m.Name(), err)
-			}
-			if !result.Allowed {
-				return nil, &RejectedError{Middleware: m.Name(), Message: result.Message}
-			}
-			current = result.Content
-		}
-		return current, nil
+	start, end, step := 0, len(p.modules), 1
+	if reverse {
+		start, end, step = len(p.modules)-1, -1, -1
 	}
-	for i := len(p.modules) - 1; i >= 0; i-- {
+	for i := start; i != end; i += step {
 		m := p.modules[i]
 		result, err := handleSafely(m, ctx, stage, current)
 		if err != nil {

@@ -1,29 +1,20 @@
-package transform
+package redirectenvtoagent
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
-)
 
-func TestDenyEnvDotfilesMiddleware(t *testing.T) {
-	m := NewDenyEnvDotfilesMiddleware()
-	got, err := m.Handle(Context{Path: "/tmp/.env.local"}, StageServe, []byte("x"))
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if got.Allowed {
-		t.Fatal("expected .env.* to be blocked")
-	}
-}
+	"llmfs/internal/transform"
+)
 
 func TestRedirectEnvToAgentMiddleware(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env.agent"), []byte("AGENT=1"), 0o644); err != nil {
 		t.Fatalf("write .env.agent: %v", err)
 	}
-	m := NewRedirectEnvToAgentMiddleware()
-	got, err := m.Handle(Context{Path: filepath.Join(dir, ".env")}, StageServe, []byte("SECRET=1"))
+	m := New()
+	got, err := m.Handle(transform.Context{Path: filepath.Join(dir, ".env")}, transform.StageServe, []byte("SECRET=1"))
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -37,8 +28,8 @@ func TestRedirectEnvToAgentMiddleware(t *testing.T) {
 
 func TestRedirectEnvToAgentMiddlewareMissingTarget(t *testing.T) {
 	dir := t.TempDir()
-	m := NewRedirectEnvToAgentMiddleware()
-	got, err := m.Handle(Context{Path: filepath.Join(dir, ".env")}, StageServe, []byte("SECRET=1"))
+	m := New()
+	got, err := m.Handle(transform.Context{Path: filepath.Join(dir, ".env")}, transform.StageServe, []byte("SECRET=1"))
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}

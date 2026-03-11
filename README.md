@@ -24,6 +24,8 @@ LLMs are priced and limited by tokens, not bytes. `llmfs` tries to reduce token 
 - Codec engine: `internal/codec`
 - Dictionary explorer: `internal/explorer`
 - FUSE mount implementation: `internal/mountfs`
+- Middleware implementations: `internal/middleware/<name>`
+- Middleware pipeline engine: `internal/transform`
 - User settings loader: `internal/appcfg`
 - CI/CD workflows: `.github/workflows`
 
@@ -192,7 +194,7 @@ Error behavior:
 - Middleware rejections map to permission-like failures for the mount client.
 - Internal middleware errors map to invalid-operation style failures.
 
-For contributor instructions on adding new middleware, see [internal/transform/README.md](./internal/transform/README.md).
+For contributor instructions on adding new middleware, see [internal/middleware/README.md](./internal/middleware/README.md).
 
 ## Transport files
 

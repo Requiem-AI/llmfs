@@ -17,6 +17,7 @@ import (
 
 	"llmfs/internal/appcfg"
 	"llmfs/internal/codec"
+	"llmfs/internal/middleware/defaults"
 	"llmfs/internal/transform"
 )
 
@@ -25,7 +26,7 @@ func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", cfgPath, err)
 	}
-	registry := transform.NewDefaultRegistry(cdc)
+	registry := defaults.NewRegistry(cdc)
 	modules := make([]transform.ModuleConfig, 0, len(settings.Middlewares))
 	for _, m := range settings.Middlewares {
 		modules = append(modules, transform.ModuleConfig{
