@@ -84,3 +84,19 @@ func TestIsTransportEndpointErr(t *testing.T) {
 		t.Fatal("did not expect unrelated error to be detected as transport endpoint error")
 	}
 }
+
+func TestStaleMountTargetsIncludesParent(t *testing.T) {
+	t.Parallel()
+
+	mountpoint := "/repo/.llmfs/mount"
+	targets := staleMountTargets(mountpoint)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(targets))
+	}
+	if targets[0] != "/repo/.llmfs/mount" {
+		t.Fatalf("unexpected first target: %s", targets[0])
+	}
+	if targets[1] != "/repo/.llmfs" {
+		t.Fatalf("unexpected second target: %s", targets[1])
+	}
+}
