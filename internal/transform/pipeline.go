@@ -3,6 +3,7 @@ package transform
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 )
 
 type Stage string
@@ -80,7 +81,7 @@ func (p *Pipeline) run(ctx Context, stage Stage, content []byte, reverse bool) (
 	current := append([]byte(nil), content...)
 	if !reverse {
 		for _, m := range p.modules {
-			result, err := m.Handle(ctx, stage, current)
+			result, err := handleSafely(m, ctx, stage, current)
 			if err != nil {
 				return nil, fmt.Errorf("middleware %q: %w", m.Name(), err)
 			}
@@ -93,7 +94,7 @@ func (p *Pipeline) run(ctx Context, stage Stage, content []byte, reverse bool) (
 	}
 	for i := len(p.modules) - 1; i >= 0; i-- {
 		m := p.modules[i]
-		result, err := m.Handle(ctx, stage, current)
+		result, err := handleSafely(m, ctx, stage, current)
 		if err != nil {
 			return nil, fmt.Errorf("middleware %q: %w", m.Name(), err)
 		}
@@ -103,4 +104,13 @@ func (p *Pipeline) run(ctx Context, stage Stage, content []byte, reverse bool) (
 		current = result.Content
 	}
 	return current, nil
+}
+
+func handleSafely(m Middleware, ctx Context, stage Stage, content []byte) (result Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic recovered: %v\n%s", r, debug.Stack())
+		}
+	}()
+	return m.Handle(ctx, stage, content)
 }

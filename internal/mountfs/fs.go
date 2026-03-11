@@ -3,8 +3,10 @@ package mountfs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,7 +35,8 @@ func newTransNode(rootData *fs.LoopbackRoot, p *transform.Pipeline, applyToAll b
 
 var _ = (fs.NodeOpener)((*TransNode)(nil))
 
-func (n *TransNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+func (n *TransNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	defer recoverAsErrno(n.realPath(), "open", &errno)
 	if !shouldTransformPath(n.realPath(), n.applyToAllFile) {
 		return n.LoopbackNode.Open(ctx, flags)
 	}
@@ -43,7 +46,8 @@ func (n *TransNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint
 
 var _ = (fs.NodeCreater)((*TransNode)(nil))
 
-func (n *TransNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
+func (n *TransNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (inode *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	defer recoverAsErrno(filepath.Join(n.realPath(), name), "create", &errno)
 	childPath := filepath.Join(n.realPath(), name)
 	inode, rawHandle, fuseFlags, errno := n.LoopbackNode.Create(ctx, name, flags, mode, out)
 	if errno != 0 {
@@ -100,7 +104,8 @@ func newTransFileHandle(path string, flags uint32, p *transform.Pipeline, create
 
 var _ = (fs.FileReader)((*transFileHandle)(nil))
 
-func (h *transFileHandle) Read(_ context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+func (h *transFileHandle) Read(_ context.Context, dest []byte, off int64) (result fuse.ReadResult, errno syscall.Errno) {
+	defer recoverAsErrno(h.path, "read", &errno)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	view, errNo := h.currentViewLocked()
@@ -119,7 +124,8 @@ func (h *transFileHandle) Read(_ context.Context, dest []byte, off int64) (fuse.
 
 var _ = (fs.FileWriter)((*transFileHandle)(nil))
 
-func (h *transFileHandle) Write(_ context.Context, data []byte, off int64) (uint32, syscall.Errno) {
+func (h *transFileHandle) Write(_ context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
+	defer recoverAsErrno(h.path, "write", &errno)
 	if !h.writable {
 		return 0, syscall.EPERM
 	}
@@ -147,7 +153,8 @@ func (h *transFileHandle) Write(_ context.Context, data []byte, off int64) (uint
 
 var _ = (fs.FileFlusher)((*transFileHandle)(nil))
 
-func (h *transFileHandle) Flush(_ context.Context) syscall.Errno {
+func (h *transFileHandle) Flush(_ context.Context) (errno syscall.Errno) {
+	defer recoverAsErrno(h.path, "flush", &errno)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.commitLocked()
@@ -155,7 +162,8 @@ func (h *transFileHandle) Flush(_ context.Context) syscall.Errno {
 
 var _ = (fs.FileReleaser)((*transFileHandle)(nil))
 
-func (h *transFileHandle) Release(_ context.Context) syscall.Errno {
+func (h *transFileHandle) Release(_ context.Context) (errno syscall.Errno) {
+	defer recoverAsErrno(h.path, "release", &errno)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.commitLocked()
@@ -243,6 +251,15 @@ func middlewareErrno(err error) syscall.Errno {
 		return syscall.EACCES
 	}
 	return syscall.EINVAL
+}
+
+func recoverAsErrno(path, op string, errno *syscall.Errno) {
+	if r := recover(); r != nil {
+		fmt.Fprintf(os.Stderr, "llmfs recovered panic during %s on %s: %v\n%s", op, path, r, debug.Stack())
+		if errno != nil {
+			*errno = syscall.EIO
+		}
+	}
 }
 
 func shouldTransformPath(path string, applyToAll bool) bool {

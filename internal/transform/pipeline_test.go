@@ -96,3 +96,26 @@ func TestPipelineReject(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestPipelineRecoversMiddlewarePanic(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register("panic", func(_ map[string]any) (Middleware, error) {
+		return &testMiddleware{
+			name: "panic",
+			handle: func(_ Stage, _ []byte) (Result, error) {
+				panic("boom")
+			},
+		}, nil
+	})
+	p, err := NewPipeline([]ModuleConfig{{Name: "panic", Enabled: true}}, reg)
+	if err != nil {
+		t.Fatalf("new pipeline: %v", err)
+	}
+	_, err = p.Serve(Context{}, []byte("x"))
+	if err == nil {
+		t.Fatal("expected panic recovery error")
+	}
+	if !strings.Contains(err.Error(), "panic recovered") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
