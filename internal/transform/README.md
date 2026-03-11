@@ -1,6 +1,6 @@
-# Middleware Development Guide
+# Transform Pipeline Guide
 
-This package contains the mount-time transformation pipeline used by `llmfs`.
+This package contains the mount-time middleware pipeline runtime used by `llmfs`.
 
 ## Pipeline contract
 
@@ -20,53 +20,9 @@ Each middleware returns:
 
 If `Allowed` is `false`, pipeline returns `RejectedError`.
 
-## Add a new middleware
+Middleware implementations are maintained in `internal/middleware/<name>`.
 
-1. Create a new file in this directory, for example `middleware_<name>.go`.
-2. Implement the interface:
-
-```go
-type myMiddleware struct{}
-
-func NewMyMiddleware(options map[string]any) (Middleware, error) {
-	// Parse and validate options here if needed.
-	return &myMiddleware{}, nil
-}
-
-func (m *myMiddleware) Name() string {
-	return "my_middleware"
-}
-
-func (m *myMiddleware) Handle(ctx Context, stage Stage, content []byte) (Result, error) {
-	_ = ctx
-	_ = stage
-	return Result{Content: content, Allowed: true}, nil
-}
-```
-
-3. Register it in `NewDefaultRegistry(...)` in `defaults.go`:
-
-```go
-r.Register("my_middleware", func(options map[string]any) (Middleware, error) {
-	return NewMyMiddleware(options)
-})
-```
-
-4. Add it to `.llmfs/settings.json` (or `examples/settings.example.json`) under `middlewares`:
-
-```json
-{
-  "name": "my_middleware",
-  "enabled": true,
-  "options": {
-    "example": "value"
-  }
-}
-```
-
-5. Add tests in this package:
-  - unit tests for middleware behavior
-  - pipeline-order tests if ordering is important
+For contributor instructions on creating or updating middleware packages, see [`internal/middleware/README.md`](../middleware/README.md).
 
 ## Design guidance
 
@@ -82,14 +38,6 @@ r.Register("my_middleware", func(options map[string]any) (Middleware, error) {
 - Rejections vs errors:
   - Use `Allowed: false` for policy denials expected in normal operation.
   - Return `error` for unexpected failures (I/O, parse failures, invalid options).
-
-## Option handling pattern
-
-`ModuleConfig.Options` is a `map[string]any` from settings JSON.
-
-- Validate required options in constructor.
-- Return a descriptive error if options are malformed.
-- Keep defaults local to middleware constructor.
 
 ## Quick test loop
 
