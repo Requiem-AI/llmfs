@@ -67,6 +67,24 @@
     "int",
     "bool"
   ],
+  "middlewares": [
+    {
+      "name": "deny_env_dotfiles",
+      "enabled": true
+    },
+    {
+      "name": "redirect_env_to_agent",
+      "enabled": true
+    },
+    {
+      "name": "codec",
+      "enabled": true
+    },
+    {
+      "name": "deny_binary",
+      "enabled": false
+    }
+  ],
   "skip_dirs_file": ".llmfs/skip_dirs.txt",
   "candidates_file": ".llmfs/candidates.txt"
 }

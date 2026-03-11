@@ -11,14 +11,30 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 
+	"llmfs/internal/appcfg"
 	"llmfs/internal/codec"
+	"llmfs/internal/transform"
 )
 
-func Mount(root, mountpoint, cfgPath string, applyToAll bool) error {
+func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
 	_, cdc, err := codec.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", cfgPath, err)
 	}
+	registry := transform.NewDefaultRegistry(cdc)
+	modules := make([]transform.ModuleConfig, 0, len(settings.Middlewares))
+	for _, m := range settings.Middlewares {
+		modules = append(modules, transform.ModuleConfig{
+			Name:    m.Name,
+			Enabled: m.Enabled,
+			Options: m.Options,
+		})
+	}
+	pipeline, err := transform.NewPipeline(modules, registry)
+	if err != nil {
+		return fmt.Errorf("build middleware pipeline: %w", err)
+	}
+
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return err
@@ -32,8 +48,8 @@ func Mount(root, mountpoint, cfgPath string, applyToAll bool) error {
 	}
 
 	rootData := &fs.LoopbackRoot{Path: root}
-	rootData.NewNode = newTransNode(rootData, cdc, applyToAll)
-	rootNode := newTransNode(rootData, cdc, applyToAll)(rootData, nil, "", nil)
+	rootData.NewNode = newTransNode(rootData, pipeline, settings.ApplyToAllFiles)
+	rootNode := newTransNode(rootData, pipeline, settings.ApplyToAllFiles)(rootData, nil, "", nil)
 
 	sec := time.Second
 	opts := &fs.Options{

@@ -11,6 +11,7 @@ import (
 	"llmfs/internal/codec"
 	"llmfs/internal/explorer"
 	"llmfs/internal/mountfs"
+	"llmfs/internal/transform"
 )
 
 const (
@@ -153,7 +154,7 @@ func runMount(args []string) error {
 		return err
 	}
 	fmt.Printf("Mounting encoded view of %s at %s\n", *root, *mountpoint)
-	return mountfs.Mount(*root, *mountpoint, *configPath, settings.ApplyToAllFiles)
+	return mountfs.Mount(*root, *mountpoint, *configPath, settings)
 }
 
 func ensureConfig(root, configPath string, settings appcfg.Settings) error {
@@ -201,18 +202,26 @@ func runEncodeDecode(args []string, encode bool) error {
 	if err != nil {
 		return err
 	}
+	pipeline, err := transform.NewPipeline(
+		[]transform.ModuleConfig{{Name: "codec", Enabled: true}},
+		transform.NewDefaultRegistry(cdc),
+	)
+	if err != nil {
+		return err
+	}
 	input, err := readInput(*inPath)
 	if err != nil {
 		return err
 	}
+	ctx := transform.Context{Path: *inPath}
 	var out []byte
 	if encode {
-		out = cdc.Encode(input)
+		out, err = pipeline.Serve(ctx, input)
 	} else {
-		out, err = cdc.Decode(input)
-		if err != nil {
-			return err
-		}
+		out, err = pipeline.Commit(ctx, input)
+	}
+	if err != nil {
+		return err
 	}
 	return writeOutput(*outPath, out)
 }
