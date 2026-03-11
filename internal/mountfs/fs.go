@@ -33,7 +33,10 @@ func newTransNode(rootData *fs.LoopbackRoot, p *transform.Pipeline, applyToAll b
 
 var _ = (fs.NodeOpener)((*TransNode)(nil))
 
-func (n *TransNode) Open(_ context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+func (n *TransNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	if !shouldTransformPath(n.realPath(), n.applyToAllFile) {
+		return n.LoopbackNode.Open(ctx, flags)
+	}
 	h := newTransFileHandle(n.realPath(), flags, n.pipeline, false, n.applyToAllFile)
 	return h, fuse.FOPEN_DIRECT_IO, 0
 }
@@ -41,15 +44,25 @@ func (n *TransNode) Open(_ context.Context, flags uint32) (fs.FileHandle, uint32
 var _ = (fs.NodeCreater)((*TransNode)(nil))
 
 func (n *TransNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	inode, _, fuseFlags, errno := n.LoopbackNode.Create(ctx, name, flags, mode, out)
+	childPath := filepath.Join(n.realPath(), name)
+	inode, rawHandle, fuseFlags, errno := n.LoopbackNode.Create(ctx, name, flags, mode, out)
 	if errno != 0 {
 		return nil, nil, 0, errno
 	}
 	child, ok := inode.Operations().(*TransNode)
 	if !ok {
+		if releaser, ok := rawHandle.(fs.FileReleaser); ok {
+			_ = releaser.Release(ctx)
+		}
 		return nil, nil, 0, syscall.EIO
 	}
-	h := newTransFileHandle(child.realPath(), flags, child.pipeline, true, child.applyToAllFile)
+	if !shouldTransformPath(childPath, child.applyToAllFile) {
+		return inode, rawHandle, fuseFlags, 0
+	}
+	if releaser, ok := rawHandle.(fs.FileReleaser); ok {
+		_ = releaser.Release(ctx)
+	}
+	h := newTransFileHandle(childPath, flags, child.pipeline, true, child.applyToAllFile)
 	return inode, h, fuseFlags | fuse.FOPEN_DIRECT_IO, 0
 }
 
