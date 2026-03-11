@@ -1,6 +1,6 @@
 {
   "apply_to_all_files": true,
-  "skip_dirs": [
+  "skip_paths": [
     ".git",
     ".llmfs",
     "node_modules",
@@ -85,6 +85,6 @@
       "enabled": false
     }
   ],
-  "skip_dirs_file": ".llmfs/skip_dirs.txt",
+  "skip_paths_file": ".llmfs/skip_paths.txt",
   "candidates_file": ".llmfs/candidates.txt"
 }

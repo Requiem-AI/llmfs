@@ -55,10 +55,10 @@ func usage() {
 
 Usage:
   llmfs                             (same as: llmfs run, default mountpoint .llmfs/mount)
-  llmfs explore [--root DIR] [--settings PATH]
-  llmfs init [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
-  llmfs mount [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
-  llmfs run [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
+  llmfs explore [-v] [--root DIR] [--settings PATH]
+  llmfs init [-v] [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
+  llmfs mount [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
+  llmfs run [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
   llmfs version
   llmfs encode [--config PATH] [--in FILE] [--out FILE]
   llmfs decode [--config PATH] [--in FILE] [--out FILE]
@@ -75,6 +75,7 @@ func must(err error) {
 func runExplore(args []string, writeFiles bool) error {
 	fs := flag.NewFlagSet("explore", flag.ContinueOnError)
 	root := fs.String("root", ".", "repository root")
+	verbose := fs.Bool("v", false, "verbose progress (print each scanned file)")
 	dictSize := fs.Int("dict-size", 0, "dictionary size (advanced; 0 = automatic)")
 	format := fs.String("format", codec.VersionTCE2, "transport format: tce1 or tce2")
 	tokenizer := fs.String("tokenizer", "cl100k_base", "tokenizer name for optimization (advanced)")
@@ -88,12 +89,35 @@ func runExplore(args []string, writeFiles bool) error {
 	if err != nil {
 		return err
 	}
+	lastStatus := ""
 	result, err := explorer.BuildDictionary(explorer.Options{
 		Root:      *root,
 		DictSize:  *dictSize,
 		Format:    *format,
 		Tokenizer: *tokenizer,
+		Verbose:   *verbose,
 		Settings:  settings,
+		Progress: func(p explorer.Progress) {
+			statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d|%s", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total, p.Path)
+			if statusKey == lastStatus {
+				return
+			}
+			lastStatus = statusKey
+			progress := ""
+			if p.Total > 0 {
+				progress = fmt.Sprintf(" [%d/%d]", p.Current, p.Total)
+			}
+			if p.Path != "" {
+				fmt.Printf("  [%s] %s%s %s (%d files, %s)\n", p.Phase, p.Message, progress, p.Path, p.FilesScanned, humanBytes(p.BytesScanned))
+				return
+			}
+			switch p.Phase {
+			case "scan", "evaluate", "analyze", "score":
+				fmt.Printf("  [%s] %s%s (%d files, %s)\n", p.Phase, p.Message, progress, p.FilesScanned, humanBytes(p.BytesScanned))
+			default:
+				fmt.Printf("  [%s] %s\n", p.Phase, p.Message)
+			}
+		},
 	})
 	if err != nil {
 		return err
@@ -137,6 +161,7 @@ func printResult(result explorer.Result) {
 func runMount(args []string) error {
 	fs := flag.NewFlagSet("mount", flag.ContinueOnError)
 	root := fs.String("root", ".", "repository root")
+	verbose := fs.Bool("v", false, "verbose progress (print each scanned file)")
 	mountpoint := fs.String("mountpoint", ".llmfs/mount", "mount destination")
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	settingsPath := fs.String("settings", defaultSettings, "settings file path")
@@ -151,14 +176,14 @@ func runMount(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureConfig(*root, *configPath, settings); err != nil {
+	if err := ensureConfig(*root, *configPath, settings, *verbose); err != nil {
 		return err
 	}
 	fmt.Printf("Mounting encoded view of %s at %s\n", *root, *mountpoint)
 	return mountfs.Mount(*root, *mountpoint, *configPath, settings)
 }
 
-func ensureConfig(root, configPath string, settings appcfg.Settings) error {
+func ensureConfig(root, configPath string, settings appcfg.Settings, verbose bool) error {
 	if _, err := os.Stat(configPath); err == nil {
 		return nil
 	}
@@ -171,9 +196,10 @@ func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 		Format:    codec.VersionTCE2,
 		Tokenizer: "cl100k_base",
 		DictSize:  0,
+		Verbose:   verbose,
 		Settings:  settings,
 		Progress: func(p explorer.Progress) {
-			statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total)
+			statusKey := fmt.Sprintf("%s|%s|%d|%d|%d|%d|%s", p.Phase, p.Message, p.FilesScanned, p.BytesScanned, p.Current, p.Total, p.Path)
 			if statusKey == lastStatus {
 				return
 			}
@@ -181,6 +207,10 @@ func ensureConfig(root, configPath string, settings appcfg.Settings) error {
 			progress := ""
 			if p.Total > 0 {
 				progress = fmt.Sprintf(" [%d/%d]", p.Current, p.Total)
+			}
+			if p.Path != "" {
+				fmt.Printf("  [%s] %s%s %s (%d files, %s)\n", p.Phase, p.Message, progress, p.Path, p.FilesScanned, humanBytes(p.BytesScanned))
+				return
 			}
 			switch p.Phase {
 			case "scan", "evaluate", "analyze", "score":

@@ -3,6 +3,7 @@ package explorer
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -39,6 +40,7 @@ type Options struct {
 	MaxTotalSize int
 	Format       string
 	Tokenizer    string
+	Verbose      bool
 	Settings     appcfg.Settings
 	Progress     func(Progress)
 }
@@ -50,6 +52,7 @@ type Progress struct {
 	BytesScanned int
 	Current      int
 	Total        int
+	Path         string
 }
 
 func BuildDictionary(opts Options) (Result, error) {
@@ -86,18 +89,31 @@ func BuildDictionary(opts Options) (Result, error) {
 	files := make([][]byte, 0, 256)
 	totalBytes := 0
 	lastScanProgress := time.Now()
+	scanLimitHit := false
 	err = filepath.WalkDir(opts.Root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() {
-			if shouldSkipDir(d.Name(), opts.Settings.SkipDirs) {
+		rel, relErr := filepath.Rel(opts.Root, path)
+		if relErr != nil {
+			rel = d.Name()
+		}
+		if rel == "." {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if shouldSkipPath(rel, d.IsDir(), opts.Settings.SkipPaths) {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if len(files) >= opts.MaxFiles || totalBytes >= opts.MaxTotalSize {
+		if d.IsDir() {
 			return nil
+		}
+		if len(files) >= opts.MaxFiles || totalBytes >= opts.MaxTotalSize {
+			scanLimitHit = true
+			return filepath.SkipAll
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -108,6 +124,15 @@ func BuildDictionary(opts Options) (Result, error) {
 		}
 		totalBytes += len(b)
 		files = append(files, b)
+		if opts.Verbose {
+			reportProgress(opts, Progress{
+				Phase:        "scan",
+				Message:      "Reading file",
+				FilesScanned: len(files),
+				BytesScanned: totalBytes,
+				Path:         rel,
+			})
+		}
 		if len(files)%100 == 0 || time.Since(lastScanProgress) >= 2*time.Second {
 			reportProgress(opts, Progress{
 				Phase:        "scan",
@@ -128,6 +153,14 @@ func BuildDictionary(opts Options) (Result, error) {
 		FilesScanned: len(files),
 		BytesScanned: totalBytes,
 	})
+	if scanLimitHit {
+		reportProgress(opts, Progress{
+			Phase:        "scan",
+			Message:      fmt.Sprintf("Scan limit reached (%d files or %s); use skip_paths patterns to narrow scope", opts.MaxFiles, humanBytes(opts.MaxTotalSize)),
+			FilesScanned: len(files),
+			BytesScanned: totalBytes,
+		})
+	}
 	if len(files) == 0 {
 		return Result{}, fmt.Errorf("no eligible UTF-8 files found under %s", opts.Root)
 	}
@@ -336,13 +369,117 @@ func BuildDictionary(opts Options) (Result, error) {
 	return result, nil
 }
 
-func shouldSkipDir(name string, skipDirs []string) bool {
-	for _, s := range skipDirs {
-		if name == s {
+func shouldSkipPath(rel string, isDir bool, patterns []string) bool {
+	skip := false
+	for _, raw := range patterns {
+		p := strings.TrimSpace(raw)
+		if p == "" || strings.HasPrefix(p, "#") {
+			continue
+		}
+		negate := strings.HasPrefix(p, "!")
+		if negate {
+			p = strings.TrimSpace(strings.TrimPrefix(p, "!"))
+			if p == "" {
+				continue
+			}
+		}
+		if matchSkipPattern(rel, isDir, p) {
+			skip = !negate
+		}
+	}
+	return skip
+}
+
+func matchSkipPattern(rel string, isDir bool, p string) bool {
+	p = filepath.ToSlash(strings.TrimSpace(p))
+	if p == "" {
+		return false
+	}
+	dirOnly := strings.HasSuffix(p, "/")
+	p = strings.TrimSuffix(p, "/")
+	p = strings.TrimPrefix(p, "./")
+	anchored := strings.HasPrefix(p, "/")
+	p = strings.TrimPrefix(p, "/")
+	if p == "" {
+		return false
+	}
+	base := path.Base(rel)
+	hasSlash := strings.Contains(p, "/")
+
+	// A plain segment (for example "node_modules") ignores any matching path segment.
+	if !hasWildcard(p) && !hasSlash {
+		if hasSegment(rel, p) {
+			return true
+		}
+		return false
+	}
+
+	if !hasWildcard(p) && hasSlash {
+		if anchored {
+			if rel == p || strings.HasPrefix(rel, p+"/") {
+				return true
+			}
+		} else {
+			if rel == p || strings.HasPrefix(rel, p+"/") || strings.Contains(rel, "/"+p+"/") || strings.HasSuffix(rel, "/"+p) {
+				return true
+			}
+		}
+	}
+
+	if !hasSlash {
+		if ok, _ := path.Match(p, base); ok {
+			return true
+		}
+	}
+	if ok, _ := path.Match(p, rel); ok {
+		return true
+	}
+	if !anchored {
+		parts := strings.Split(rel, "/")
+		for i := 1; i < len(parts); i++ {
+			if ok, _ := path.Match(p, strings.Join(parts[i:], "/")); ok {
+				return true
+			}
+		}
+	}
+
+	// Directory-only patterns should also ignore descendants.
+	if dirOnly {
+		if rel == p || strings.HasPrefix(rel, p+"/") || strings.Contains(rel, "/"+p+"/") {
+			return true
+		}
+		if isDir && path.Base(rel) == path.Base(p) && !hasSlash {
 			return true
 		}
 	}
 	return false
+}
+
+func hasSegment(rel, name string) bool {
+	if rel == name {
+		return true
+	}
+	if strings.HasPrefix(rel, name+"/") || strings.HasSuffix(rel, "/"+name) || strings.Contains(rel, "/"+name+"/") {
+		return true
+	}
+	return false
+}
+
+func hasWildcard(s string) bool {
+	return strings.ContainsAny(s, "*?[")
+}
+
+func humanBytes(n int) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := unit, 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func selectSymbols(format string, dictSize int, tk *tiktoken.Tiktoken, corpus string) (string, []string, error) {
