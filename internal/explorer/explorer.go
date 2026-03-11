@@ -1,0 +1,344 @@
+package explorer
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/pkoukk/tiktoken-go"
+
+	"llmfs/internal/codec"
+)
+
+var textExt = map[string]struct{}{
+	".go": {}, ".md": {}, ".txt": {}, ".yaml": {}, ".yml": {}, ".json": {},
+	".toml": {}, ".xml": {}, ".html": {}, ".css": {}, ".js": {}, ".ts": {},
+	".tsx": {}, ".jsx": {}, ".py": {}, ".java": {}, ".c": {}, ".cc": {},
+	".cpp": {}, ".h": {}, ".hpp": {}, ".rs": {}, ".sh": {}, ".sql": {},
+	".proto": {}, ".ini": {}, ".cfg": {},
+}
+
+var baseCandidates = []string{
+	"package ", "import ", "func ", "return ", "if ", " else ", "for ", "range ",
+	"struct ", "interface ", "type ", "var ", "const ", " := ", " == ", " != ",
+	" <= ", " >= ", " && ", " || ", "()", "{}", "[]", "\n\t", "\n    ",
+	"\n\n", "\n- ", "\n# ", "\n## ", "\n### ", "```", "TODO", "NOTE",
+	"http://", "https://", "github.com/", "error", "context", "string", "int",
+}
+
+var wordRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]{3,}`)
+
+type Result struct {
+	Root           string
+	FilesScanned   int
+	BytesScanned   int
+	RawTokens      int
+	EncodedTokens  int
+	TokenReduction float64
+	Entries        []string
+	Version        string
+	Escape         string
+	Codes          []string
+}
+
+type Options struct {
+	Root         string
+	DictSize     int
+	MaxFiles     int
+	MaxTotalSize int
+	Format       string
+	Tokenizer    string
+}
+
+func IsEligibleFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	_, ok := textExt[ext]
+	return ok
+}
+
+func BuildDictionary(opts Options) (Result, error) {
+	if opts.DictSize <= 0 {
+		if opts.Format == codec.VersionTCE1 {
+			opts.DictSize = 62
+		} else {
+			opts.DictSize = 96
+		}
+	}
+	if opts.MaxFiles <= 0 {
+		opts.MaxFiles = 5000
+	}
+	if opts.MaxTotalSize <= 0 {
+		opts.MaxTotalSize = 8 << 20
+	}
+	if opts.Format == "" {
+		opts.Format = codec.VersionTCE1
+	}
+	if opts.Tokenizer == "" {
+		opts.Tokenizer = "cl100k_base"
+	}
+
+	tk, err := tiktoken.GetEncoding(opts.Tokenizer)
+	if err != nil {
+		return Result{}, fmt.Errorf("load tokenizer %q: %w", opts.Tokenizer, err)
+	}
+
+	files := make([][]byte, 0, 256)
+	totalBytes := 0
+	err = filepath.WalkDir(opts.Root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == ".llmfs" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(files) >= opts.MaxFiles || totalBytes >= opts.MaxTotalSize {
+			return nil
+		}
+		if !IsEligibleFile(path) {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if !utf8.Valid(b) {
+			return nil
+		}
+		if len(b) == 0 {
+			return nil
+		}
+		totalBytes += len(b)
+		files = append(files, b)
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	if len(files) == 0 {
+		return Result{}, fmt.Errorf("no eligible text files found under %s", opts.Root)
+	}
+
+	candidates := make(map[string]struct{}, 2000)
+	for _, c := range baseCandidates {
+		candidates[c] = struct{}{}
+	}
+	wordFreq := map[string]int{}
+	for _, b := range files {
+		for _, w := range wordRe.FindAllString(string(b), -1) {
+			wordFreq[w]++
+		}
+	}
+	type wf struct {
+		w string
+		n int
+	}
+	words := make([]wf, 0, len(wordFreq))
+	for w, n := range wordFreq {
+		if n >= 3 {
+			words = append(words, wf{w: w, n: n})
+		}
+	}
+	sort.Slice(words, func(i, j int) bool {
+		if words[i].n == words[j].n {
+			return words[i].w < words[j].w
+		}
+		return words[i].n > words[j].n
+	})
+	if len(words) > 500 {
+		words = words[:500]
+	}
+	for _, w := range words {
+		candidates[w.w] = struct{}{}
+		candidates[w.w+" "] = struct{}{}
+	}
+
+	blobParts := make([]string, 0, len(files))
+	rawTokens := 0
+	for _, b := range files {
+		s := string(b)
+		blobParts = append(blobParts, s)
+		rawTokens += len(tk.Encode(s, nil, nil))
+	}
+	blob := strings.Join(blobParts, "\n")
+
+	escape, codes, err := selectSymbols(opts.Format, opts.DictSize, tk, blob)
+	if err != nil {
+		return Result{}, err
+	}
+	replTokenCost := len(tk.Encode(escape+codes[0], nil, nil))
+	if opts.Format == codec.VersionTCE2 {
+		replTokenCost = len(tk.Encode(codes[0], nil, nil))
+	}
+
+	type scored struct {
+		text string
+		gain int
+	}
+	scores := make([]scored, 0, len(candidates))
+	for cand := range candidates {
+		if len(cand) < 2 || strings.Contains(cand, escape) {
+			continue
+		}
+		occ := strings.Count(blob, cand)
+		if occ < 2 {
+			continue
+		}
+		from := len(tk.Encode(cand, nil, nil))
+		gain := occ * (from - replTokenCost)
+		if gain > 0 {
+			scores = append(scores, scored{text: cand, gain: gain})
+		}
+	}
+	sort.Slice(scores, func(i, j int) bool {
+		if scores[i].gain == scores[j].gain {
+			if len(scores[i].text) == len(scores[j].text) {
+				return scores[i].text < scores[j].text
+			}
+			return len(scores[i].text) > len(scores[j].text)
+		}
+		return scores[i].gain > scores[j].gain
+	})
+
+	selected := make([]string, 0, opts.DictSize)
+	seen := map[string]struct{}{}
+	for _, s := range scores {
+		if len(selected) >= opts.DictSize {
+			break
+		}
+		if _, ok := seen[s.text]; ok {
+			continue
+		}
+		seen[s.text] = struct{}{}
+		selected = append(selected, s.text)
+	}
+
+	cfg := codec.BuildConfig(selected, opts.Format, escape, codes, opts.DictSize)
+	cdc, err := codec.NewFromConfig(cfg)
+	if err != nil {
+		return Result{}, err
+	}
+
+	encodedTokens := 0
+	for _, b := range files {
+		enc := cdc.Encode(b)
+		encodedTokens += len(tk.Encode(string(enc), nil, nil))
+	}
+
+	reduction := 0.0
+	if rawTokens > 0 {
+		reduction = (float64(rawTokens-encodedTokens) / float64(rawTokens)) * 100.0
+	}
+
+	usedCodes := make([]string, 0, len(cfg.Entries))
+	for _, e := range cfg.Entries {
+		usedCodes = append(usedCodes, e.Code)
+	}
+
+	return Result{
+		Root:           opts.Root,
+		FilesScanned:   len(files),
+		BytesScanned:   totalBytes,
+		RawTokens:      rawTokens,
+		EncodedTokens:  encodedTokens,
+		TokenReduction: reduction,
+		Entries:        selected,
+		Version:        opts.Format,
+		Escape:         escape,
+		Codes:          usedCodes,
+	}, nil
+}
+
+func selectSymbols(format string, dictSize int, tk *tiktoken.Tiktoken, corpus string) (string, []string, error) {
+	if format == codec.VersionTCE1 {
+		if dictSize > len(codec.TCE1CodeAlphabet) {
+			dictSize = len(codec.TCE1CodeAlphabet)
+		}
+		codes := make([]string, 0, dictSize)
+		for i := 0; i < dictSize; i++ {
+			codes = append(codes, codec.TCE1CodeAlphabet[i])
+		}
+		return "~", codes, nil
+	}
+	if format != codec.VersionTCE2 {
+		return "", nil, fmt.Errorf("unsupported format %q", format)
+	}
+	need := dictSize + 1 // escape + codes
+	oneToken := selectOneTokenSymbols(tk, corpus, need)
+	if len(oneToken) >= need {
+		return oneToken[0], oneToken[1 : dictSize+1], nil
+	}
+
+	type cand struct {
+		s    string
+		cost int
+	}
+	candidates := make([]cand, 0, 2048)
+	for r := rune(0x00A1); r <= rune(0x2BFF); r++ {
+		if !utf8.ValidRune(r) || unicode.IsControl(r) || unicode.IsSpace(r) {
+			continue
+		}
+		s := string(r)
+		if strings.Contains(corpus, s) {
+			continue
+		}
+		cost := len(tk.Encode(s, nil, nil))
+		if cost <= 0 || cost > 3 {
+			continue
+		}
+		candidates = append(candidates, cand{s: s, cost: cost})
+	}
+	if len(candidates) < need {
+		return "", nil, fmt.Errorf("tce2 needs %d symbols, found %d with <=3 token cost", need, len(candidates))
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].cost == candidates[j].cost {
+			return candidates[i].s < candidates[j].s
+		}
+		return candidates[i].cost < candidates[j].cost
+	})
+	chosen := candidates[:need]
+	escape := chosen[0].s
+	codes := make([]string, 0, dictSize)
+	for i := 1; i < len(chosen); i++ {
+		codes = append(codes, chosen[i].s)
+	}
+	return escape, codes, nil
+}
+
+func selectOneTokenSymbols(tk *tiktoken.Tiktoken, corpus string, need int) []string {
+	const maxTokenID = 300000
+	seen := map[string]struct{}{}
+	out := make([]string, 0, need)
+	for id := 0; id < maxTokenID && len(out) < need; id++ {
+		s := tk.Decode([]int{id})
+		if s == "" || !utf8.ValidString(s) || strings.Contains(corpus, s) {
+			continue
+		}
+		if len(tk.Encode(s, nil, nil)) != 1 {
+			continue
+		}
+		r := []rune(s)
+		if len(r) != 1 {
+			continue
+		}
+		ch := r[0]
+		if unicode.IsControl(ch) || unicode.IsSpace(ch) || unicode.IsLetter(ch) || unicode.IsDigit(ch) {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}

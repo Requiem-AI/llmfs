@@ -1,0 +1,9 @@
+# Build outputs
+/llmfs
+/dist/
+
+# Local generated transport config
+.llmfs/
+
+# macOS
+.DS_Store
