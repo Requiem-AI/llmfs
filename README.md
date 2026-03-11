@@ -122,6 +122,39 @@ Behavior notes:
   - `deny_binary` rejects content containing NUL bytes (optional check)
 - `*_file` values allow external editable lists (default paths shown above)
 
+## Middleware Layer
+
+The middleware layer is the transformation and policy boundary between raw repository bytes and what appears in the mounted filesystem.
+
+Execution model:
+
+- Read path (`serve` stage): raw file bytes are passed through middlewares in listed order.
+- Write path (`commit` stage): user-edited bytes are passed through the same middlewares in reverse order before writing to disk.
+- A middleware can:
+  - transform content (`Result.Content`)
+  - allow or deny the operation (`Result.Allowed`)
+  - return an explicit rejection message (`Result.Message`)
+
+Current built-in middlewares:
+
+- `deny_env_dotfiles`: blocks reads of `.env.*` files
+- `redirect_env_to_agent`: when reading `.env`, serves `.env.agent` instead
+- `codec`: encodes on `serve`, decodes on `commit`
+- `deny_binary`: rejects NUL-byte content (optional)
+
+Why ordering matters:
+
+- Security/policy checks should generally run before content transforms.
+- Invertible transforms (like `codec`) should usually be late in `serve`, so their inverse runs early in `commit`.
+- Since `commit` reverses order, think in terms of a forward read pipeline and a mirrored write pipeline.
+
+Error behavior:
+
+- Middleware rejections map to permission-like failures for the mount client.
+- Internal middleware errors map to invalid-operation style failures.
+
+For contributor instructions on adding new middleware, see [internal/transform/README.md](./internal/transform/README.md).
+
 ## Transport files
 
 - `.llmfs/config.json`: generated codec config (version, escape symbol, dictionary)
