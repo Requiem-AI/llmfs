@@ -68,11 +68,35 @@ func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
 	}
 	fmt.Printf("Mounted and ready at %s (source: %s). Press Ctrl+C to unmount.\n", mountpoint, root)
 
-	sig := make(chan os.Signal, 1)
+	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
+		defer signal.Stop(sig)
 		<-sig
-		_ = server.Unmount()
+		fmt.Fprintln(os.Stderr, "\nInterrupt received, unmounting...")
+
+		done := make(chan error, 1)
+		go func() {
+			done <- server.Unmount()
+		}()
+
+		warn := time.NewTimer(3 * time.Second)
+		defer warn.Stop()
+		for {
+			select {
+			case err := <-done:
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Unmount error: %v\n", err)
+				}
+				return
+			case <-warn.C:
+				fmt.Fprintln(os.Stderr, "Unmount still in progress. Press Ctrl+C again to force exit.")
+				warn.Reset(3 * time.Second)
+			case <-sig:
+				fmt.Fprintln(os.Stderr, "\nSecond interrupt received, forcing exit.")
+				os.Exit(130)
+			}
+		}
 	}()
 
 	server.Wait()

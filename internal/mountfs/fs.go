@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -63,7 +64,7 @@ type transFileHandle struct {
 	pipeline      *transform.Pipeline
 	writable      bool
 	created       bool
-	applyToAllRaw bool
+	applyTransform bool
 
 	mu        sync.Mutex
 	prepared  bool
@@ -74,7 +75,14 @@ type transFileHandle struct {
 
 func newTransFileHandle(path string, flags uint32, p *transform.Pipeline, created bool, applyToAll bool) *transFileHandle {
 	writable := flags&syscall.O_WRONLY != 0 || flags&syscall.O_RDWR != 0
-	return &transFileHandle{path: path, flags: flags, pipeline: p, writable: writable, created: created, applyToAllRaw: applyToAll}
+	return &transFileHandle{
+		path:           path,
+		flags:          flags,
+		pipeline:       p,
+		writable:       writable,
+		created:        created,
+		applyTransform: shouldTransformPath(path, applyToAll),
+	}
 }
 
 var _ = (fs.FileReader)((*transFileHandle)(nil))
@@ -101,6 +109,9 @@ var _ = (fs.FileWriter)((*transFileHandle)(nil))
 func (h *transFileHandle) Write(_ context.Context, data []byte, off int64) (uint32, syscall.Errno) {
 	if !h.writable {
 		return 0, syscall.EPERM
+	}
+	if len(data) == 0 {
+		return 0, 0
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -148,7 +159,7 @@ func (h *transFileHandle) currentViewLocked() ([]byte, syscall.Errno) {
 		}
 		return nil, fs.ToErrno(err)
 	}
-	if h.applyToAllRaw {
+	if h.applyTransform {
 		transformed, err := h.pipeline.Serve(h.middlewareContext(), raw)
 		if err != nil {
 			return nil, middlewareErrno(err)
@@ -169,7 +180,7 @@ func (h *transFileHandle) prepareWriteLocked() syscall.Errno {
 		}
 		raw = []byte{}
 	}
-	h.transform = h.applyToAllRaw
+	h.transform = h.applyTransform
 	if h.transform {
 		transformed, err := h.pipeline.Serve(h.middlewareContext(), raw)
 		if err != nil {
@@ -219,4 +230,26 @@ func middlewareErrno(err error) syscall.Errno {
 		return syscall.EACCES
 	}
 	return syscall.EINVAL
+}
+
+func shouldTransformPath(path string, applyToAll bool) bool {
+	if !applyToAll {
+		return false
+	}
+	name := strings.ToLower(filepath.Base(path))
+	if name == "" {
+		return true
+	}
+	if strings.HasPrefix(name, ".#") {
+		return false
+	}
+	if strings.HasSuffix(name, "~") {
+		return false
+	}
+	for _, suffix := range []string{".swp", ".swo", ".swx", ".tmp", ".temp", ".lock", ".lck", ".bak"} {
+		if strings.HasSuffix(name, suffix) {
+			return false
+		}
+	}
+	return true
 }
