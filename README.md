@@ -33,6 +33,18 @@ LLMs are priced and limited by tokens, not bytes. `llmfs` tries to reduce token 
 - FUSE support installed on the host OS
 - Permissions to mount FUSE filesystems
 
+## One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Requiem-AI/llmfs/main/install.sh | bash
+```
+
+Notes:
+
+- Installer currently supports Linux `x86_64` (matches release artifact)
+- Default install path is `/usr/local/bin` if writable, otherwise `~/.local/bin`
+- Override install path with `INSTALL_DIR=/your/bin/path`
+
 ## Quick start
 
 ```bash
