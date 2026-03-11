@@ -100,3 +100,29 @@ func TestStaleMountTargetsIncludesParent(t *testing.T) {
 		t.Fatalf("unexpected second target: %s", targets[1])
 	}
 }
+
+func TestIsUnmountNoopOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{name: "not-mounted", out: "fusermount: entry for /x not found in /etc/mtab", want: true},
+		{name: "transport-endpoint", out: "Transport endpoint is not connected", want: true},
+		{name: "empty", out: "", want: false},
+		{name: "real-error", out: "operation not permitted", want: false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isUnmountNoopOutput([]byte(tc.out))
+			if got != tc.want {
+				t.Fatalf("isUnmountNoopOutput(%q) = %v, want %v", tc.out, got, tc.want)
+			}
+		})
+	}
+}
