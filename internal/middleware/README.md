@@ -13,7 +13,7 @@ Middleware implementations are split into dedicated packages under `internal/mid
 1. Create a new package under `internal/middleware/<name>`.
 2. Implement the `transform.Middleware` interface.
 3. Register it in `internal/middleware/defaults/defaults.go` if it should be built-in.
-4. Add it to `.llmfs/settings.json` (or `examples/settings.example.json`) under `middlewares`.
+4. Add it to `.llmfs/settings.json` (or `examples/settings.example.json`) under `available_plugins`.
 5. Add package-local tests for behavior and edge cases.
 
 Example skeleton:
@@ -39,14 +39,6 @@ func (m *middleware) Handle(ctx transform.Context, stage transform.Stage, conten
 	return transform.Result{Content: content, Allowed: true}, nil
 }
 ```
-
-## Option handling
-
-`ModuleConfig.Options` is a `map[string]any` from settings JSON.
-
-- Validate required options in constructor.
-- Return descriptive errors for malformed options.
-- Keep defaults local to middleware constructors.
 
 ## Test loop
 

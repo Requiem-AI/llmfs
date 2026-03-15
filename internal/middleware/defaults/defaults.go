@@ -11,22 +11,14 @@ import (
 	"llmfs/internal/transform"
 )
 
-func NewRegistry(cdc *internalcodec.Codec) *transform.Registry {
-	r := transform.NewRegistry()
-	r.Register("codec", func(_ map[string]any) (transform.Middleware, error) {
-		if cdc == nil {
-			return nil, fmt.Errorf("codec middleware requires a codec instance")
-		}
-		return codec.New(cdc), nil
-	})
-	r.Register("deny_binary", func(_ map[string]any) (transform.Middleware, error) {
-		return denybinary.New(), nil
-	})
-	r.Register("deny_env_dotfiles", func(_ map[string]any) (transform.Middleware, error) {
-		return denyenvdotfiles.New(), nil
-	})
-	r.Register("redirect_env_to_agent", func(_ map[string]any) (transform.Middleware, error) {
-		return redirectenvtoagent.New(), nil
-	})
-	return r
+func AvailablePlugins(cdc *internalcodec.Codec) ([]transform.Middleware, error) {
+	if cdc == nil {
+		return nil, fmt.Errorf("codec plugin requires a codec instance")
+	}
+	return []transform.Middleware{
+		denyenvdotfiles.New(),
+		redirectenvtoagent.New(),
+		codec.New(cdc),
+		denybinary.New(),
+	}, nil
 }

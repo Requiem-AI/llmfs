@@ -29,12 +29,6 @@ type Middleware interface {
 	Handle(ctx Context, stage Stage, content []byte) (Result, error)
 }
 
-type ModuleConfig struct {
-	Name    string
-	Enabled bool
-	Options map[string]any
-}
-
 type RejectedError struct {
 	Middleware string
 	Message    string
@@ -51,21 +45,31 @@ type Pipeline struct {
 	modules []Middleware
 }
 
-func NewPipeline(configs []ModuleConfig, r *Registry) (*Pipeline, error) {
-	if r == nil {
-		return nil, fmt.Errorf("middleware registry is nil")
-	}
-	modules := make([]Middleware, 0, len(configs))
-	for _, cfg := range configs {
-		if !cfg.Enabled {
+func NewPipeline(enabledPlugins []string, availablePlugins []Middleware) (*Pipeline, error) {
+	availableByName := make(map[string]Middleware, len(availablePlugins))
+	for _, plugin := range availablePlugins {
+		if plugin == nil {
 			continue
 		}
-		m, err := r.Create(cfg.Name, cfg.Options)
-		if err != nil {
-			return nil, err
+		name := plugin.Name()
+		if name == "" {
+			return nil, fmt.Errorf("available plugin has empty name")
 		}
-		modules = append(modules, m)
+		if _, exists := availableByName[name]; exists {
+			return nil, fmt.Errorf("duplicate available plugin %q", name)
+		}
+		availableByName[name] = plugin
 	}
+
+	modules := make([]Middleware, 0, len(enabledPlugins))
+	for _, name := range enabledPlugins {
+		plugin, ok := availableByName[name]
+		if !ok {
+			return nil, fmt.Errorf("plugin %q is not available", name)
+		}
+		modules = append(modules, plugin)
+	}
+
 	return &Pipeline{modules: modules}, nil
 }
 

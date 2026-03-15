@@ -27,23 +27,10 @@
     "*.webp",
     "*.pdf"
   ],
-  "middlewares": [
-    {
-      "name": "deny_env_dotfiles",
-      "enabled": true
-    },
-    {
-      "name": "redirect_env_to_agent",
-      "enabled": true
-    },
-    {
-      "name": "codec",
-      "enabled": true
-    },
-    {
-      "name": "deny_binary",
-      "enabled": false
-    }
+  "available_plugins": [
+    "deny_env_dotfiles",
+    "redirect_env_to_agent",
+    "codec"
   ],
   "candidates_file": ".llmfs/candidates.txt"
 }

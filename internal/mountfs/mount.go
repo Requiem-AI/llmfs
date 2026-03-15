@@ -26,18 +26,13 @@ func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", cfgPath, err)
 	}
-	registry := defaults.NewRegistry(cdc)
-	modules := make([]transform.ModuleConfig, 0, len(settings.Middlewares))
-	for _, m := range settings.Middlewares {
-		modules = append(modules, transform.ModuleConfig{
-			Name:    m.Name,
-			Enabled: m.Enabled,
-			Options: m.Options,
-		})
-	}
-	pipeline, err := transform.NewPipeline(modules, registry)
+	availablePlugins, err := defaults.AvailablePlugins(cdc)
 	if err != nil {
-		return fmt.Errorf("build middleware pipeline: %w", err)
+		return fmt.Errorf("load available plugins: %w", err)
+	}
+	pipeline, err := transform.NewPipeline(settings.AvailablePlugins, availablePlugins)
+	if err != nil {
+		return fmt.Errorf("build plugin pipeline: %w", err)
 	}
 
 	root, err = filepath.Abs(root)

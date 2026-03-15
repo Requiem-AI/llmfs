@@ -17,17 +17,14 @@ func (m *testMiddleware) Handle(_ Context, stage Stage, content []byte) (Result,
 }
 
 func TestPipelineServeOrderAndCommitReverseOrder(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("a", func(_ map[string]any) (Middleware, error) {
-		return &testMiddleware{
+	available := []Middleware{
+		&testMiddleware{
 			name: "a",
 			handle: func(_ Stage, content []byte) (Result, error) {
 				return Result{Content: append(content, 'A'), Allowed: true}, nil
 			},
-		}, nil
-	})
-	reg.Register("b", func(_ map[string]any) (Middleware, error) {
-		return &testMiddleware{
+		},
+		&testMiddleware{
 			name: "b",
 			handle: func(stage Stage, content []byte) (Result, error) {
 				if stage == StageServe {
@@ -35,10 +32,8 @@ func TestPipelineServeOrderAndCommitReverseOrder(t *testing.T) {
 				}
 				return Result{Content: append(content, 'b'), Allowed: true}, nil
 			},
-		}, nil
-	})
-	reg.Register("c", func(_ map[string]any) (Middleware, error) {
-		return &testMiddleware{
+		},
+		&testMiddleware{
 			name: "c",
 			handle: func(stage Stage, content []byte) (Result, error) {
 				if stage == StageServe {
@@ -46,13 +41,9 @@ func TestPipelineServeOrderAndCommitReverseOrder(t *testing.T) {
 				}
 				return Result{Content: append(content, 'c'), Allowed: true}, nil
 			},
-		}, nil
-	})
-	p, err := NewPipeline([]ModuleConfig{
-		{Name: "a", Enabled: true},
-		{Name: "b", Enabled: true},
-		{Name: "c", Enabled: true},
-	}, reg)
+		},
+	}
+	p, err := NewPipeline([]string{"a", "b", "c"}, available)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
 	}
@@ -75,16 +66,14 @@ func TestPipelineServeOrderAndCommitReverseOrder(t *testing.T) {
 }
 
 func TestPipelineReject(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("reject", func(_ map[string]any) (Middleware, error) {
-		return &testMiddleware{
+	p, err := NewPipeline([]string{"reject"}, []Middleware{
+		&testMiddleware{
 			name: "reject",
 			handle: func(_ Stage, content []byte) (Result, error) {
 				return Result{Content: content, Allowed: false, Message: "blocked"}, nil
 			},
-		}, nil
+		},
 	})
-	p, err := NewPipeline([]ModuleConfig{{Name: "reject", Enabled: true}}, reg)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
 	}
@@ -98,16 +87,14 @@ func TestPipelineReject(t *testing.T) {
 }
 
 func TestPipelineRecoversMiddlewarePanic(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("panic", func(_ map[string]any) (Middleware, error) {
-		return &testMiddleware{
+	p, err := NewPipeline([]string{"panic"}, []Middleware{
+		&testMiddleware{
 			name: "panic",
 			handle: func(_ Stage, _ []byte) (Result, error) {
 				panic("boom")
 			},
-		}, nil
+		},
 	})
-	p, err := NewPipeline([]ModuleConfig{{Name: "panic", Enabled: true}}, reg)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
 	}
@@ -116,6 +103,20 @@ func TestPipelineRecoversMiddlewarePanic(t *testing.T) {
 		t.Fatal("expected panic recovery error")
 	}
 	if !strings.Contains(err.Error(), "panic recovered") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPipelineErrorsWhenPluginUnavailable(t *testing.T) {
+	_, err := NewPipeline([]string{"missing"}, []Middleware{
+		&testMiddleware{name: "a", handle: func(_ Stage, content []byte) (Result, error) {
+			return Result{Content: content, Allowed: true}, nil
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected unavailable plugin error")
+	}
+	if !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

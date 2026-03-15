@@ -20,7 +20,9 @@ LLMs are priced and limited by tokens, not bytes. `llmfs` tries to reduce token 
 
 ## Repository layout
 
-- CLI entry: `cmd/llmfs/main.go`
+- CLI bootstrap (harness): `cmd/llmfs/main.go`
+- CLI command app: `internal/app`
+- Runtime setup defaults/helpers: `internal/setup`
 - Codec engine: `internal/codec`
 - Dictionary explorer: `internal/explorer`
 - FUSE mount implementation: `internal/mountfs`
@@ -135,11 +137,10 @@ Example:
     "*.webp",
     "*.pdf"
   ],
-  "middlewares": [
-    { "name": "deny_env_dotfiles", "enabled": true },
-    { "name": "redirect_env_to_agent", "enabled": true },
-    { "name": "codec", "enabled": true },
-    { "name": "deny_binary", "enabled": false }
+  "available_plugins": [
+    "deny_env_dotfiles",
+    "redirect_env_to_agent",
+    "codec"
   ],
   "candidates_file": ".llmfs/candidates.txt"
 }
@@ -150,12 +151,12 @@ Behavior notes:
 - `apply_to_all_files: true` means mount-time transform applies to all files, regardless of extension
 - `skip_paths` supports gitignore-like path patterns for both files and directories (`name`, `dir/`, `*.ext`, `path/to/file`, and optional `!` negate)
 - dictionary candidates are sourced from `candidates_file` (`.llmfs/candidates.txt` by default)
-- `middlewares` defines ordered modules for read/write transform in FUSE:
+- `available_plugins` defines ordered plugins for read/write transform in FUSE:
   - `serve` path runs in listed order
   - `commit` path runs in reverse order
   - `deny_env_dotfiles` blocks reads of filenames matching `.env.*`
   - `redirect_env_to_agent` serves `.env.agent` when `.env` is read
-  - `codec` middleware now owns encode/decode behavior
+  - `codec` plugin now owns encode/decode behavior
   - `deny_binary` rejects content containing NUL bytes (optional check)
 - `candidates_file` allows external editable candidate list (default path shown above)
 
@@ -163,20 +164,20 @@ Verbose scan output:
 
 - Add `-v` to `explore`, `init`, `mount`, or `run` to print each scanned file path as dictionary defaults are generated.
 
-## Middleware Layer
+## Plugin Layer
 
-The middleware layer is the transformation and policy boundary between raw repository bytes and what appears in the mounted filesystem.
+The plugin layer is the transformation and policy boundary between raw repository bytes and what appears in the mounted filesystem.
 
 Execution model:
 
-- Read path (`serve` stage): raw file bytes are passed through middlewares in listed order.
-- Write path (`commit` stage): user-edited bytes are passed through the same middlewares in reverse order before writing to disk.
-- A middleware can:
+- Read path (`serve` stage): raw file bytes are passed through plugins in listed order.
+- Write path (`commit` stage): user-edited bytes are passed through the same plugins in reverse order before writing to disk.
+- A plugin can:
   - transform content (`Result.Content`)
   - allow or deny the operation (`Result.Allowed`)
   - return an explicit rejection message (`Result.Message`)
 
-Current built-in middlewares:
+Current built-in plugins:
 
 - `deny_env_dotfiles`: blocks reads of `.env.*` files
 - `redirect_env_to_agent`: when reading `.env`, serves `.env.agent` instead
@@ -191,8 +192,8 @@ Why ordering matters:
 
 Error behavior:
 
-- Middleware rejections map to permission-like failures for the mount client.
-- Internal middleware errors map to invalid-operation style failures.
+- Plugin rejections map to permission-like failures for the mount client.
+- Internal plugin errors map to invalid-operation style failures.
 
 For contributor instructions on adding new middleware, see [internal/middleware/README.md](./internal/middleware/README.md).
 

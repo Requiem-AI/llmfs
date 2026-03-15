@@ -9,13 +9,14 @@ import (
 )
 
 type Settings struct {
-	ApplyToAllFiles bool         `json:"apply_to_all_files"`
-	SkipPaths       []string     `json:"skip_paths"`
-	Candidates      []string     `json:"-"`
-	Middlewares     []Middleware `json:"middlewares"`
-	CandidatesFile  string       `json:"candidates_file"`
+	ApplyToAllFiles  bool     `json:"apply_to_all_files"`
+	SkipPaths        []string `json:"skip_paths"`
+	Candidates       []string `json:"-"`
+	AvailablePlugins []string `json:"available_plugins"`
+	CandidatesFile   string   `json:"candidates_file"`
 }
 
+// Middleware is kept only for backward compatibility when reading legacy settings.
 type Middleware struct {
 	Name    string         `json:"name"`
 	Enabled bool           `json:"enabled"`
@@ -23,10 +24,11 @@ type Middleware struct {
 }
 
 type partialSettings struct {
-	ApplyToAllFiles *bool         `json:"apply_to_all_files"`
-	SkipPaths       []string      `json:"skip_paths"`
-	Middlewares     *[]Middleware `json:"middlewares"`
-	CandidatesFile  string        `json:"candidates_file"`
+	ApplyToAllFiles  *bool         `json:"apply_to_all_files"`
+	SkipPaths        []string      `json:"skip_paths"`
+	AvailablePlugins []string      `json:"available_plugins"`
+	Middlewares      *[]Middleware `json:"middlewares"`
+	CandidatesFile   string        `json:"candidates_file"`
 }
 
 func DefaultSettings() Settings {
@@ -38,23 +40,10 @@ func DefaultSettings() Settings {
 			"*.lock", "*.min.js", "*.map", "*.svg", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.pdf",
 		},
 		Candidates: defaultCandidates(),
-		Middlewares: []Middleware{
-			{
-				Name:    "deny_env_dotfiles",
-				Enabled: true,
-			},
-			{
-				Name:    "redirect_env_to_agent",
-				Enabled: true,
-			},
-			{
-				Name:    "codec",
-				Enabled: true,
-			},
-			{
-				Name:    "deny_binary",
-				Enabled: false,
-			},
+		AvailablePlugins: []string{
+			"deny_env_dotfiles",
+			"redirect_env_to_agent",
+			"codec",
 		},
 		CandidatesFile: ".llmfs/candidates.txt",
 	}
@@ -92,8 +81,10 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 		if len(p.SkipPaths) > 0 {
 			cfg.SkipPaths = append([]string(nil), p.SkipPaths...)
 		}
-		if p.Middlewares != nil {
-			cfg.Middlewares = normalizeMiddlewares(*p.Middlewares)
+		if len(p.AvailablePlugins) > 0 {
+			cfg.AvailablePlugins = normalizeStringList(p.AvailablePlugins)
+		} else if p.Middlewares != nil {
+			cfg.AvailablePlugins = enabledMiddlewareNames(*p.Middlewares)
 		}
 		if p.CandidatesFile != "" {
 			cfg.CandidatesFile = p.CandidatesFile
@@ -115,7 +106,7 @@ func LoadOrInit(root, settingsPath string) (Settings, error) {
 
 	cfg.SkipPaths = normalizeSet(cfg.SkipPaths)
 	cfg.Candidates = uniqueKeepOrder(cfg.Candidates)
-	cfg.Middlewares = normalizeMiddlewares(cfg.Middlewares)
+	cfg.AvailablePlugins = normalizeStringList(cfg.AvailablePlugins)
 	return cfg, nil
 }
 
@@ -197,26 +188,36 @@ func uniqueKeepOrder(in []string) []string {
 	return out
 }
 
-func normalizeMiddlewares(in []Middleware) []Middleware {
-	if len(in) == 0 {
-		return []Middleware{}
+func normalizeStringList(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
 	}
-	out := make([]Middleware, 0, len(in))
+	return out
+}
+
+func enabledMiddlewareNames(in []Middleware) []string {
+	out := make([]string, 0, len(in))
 	for _, m := range in {
+		if !m.Enabled {
+			continue
+		}
 		name := strings.TrimSpace(m.Name)
 		if name == "" {
 			continue
 		}
-		normalized := Middleware{
-			Name:    name,
-			Enabled: m.Enabled,
-		}
-		if m.Options != nil {
-			normalized.Options = m.Options
-		}
-		out = append(out, normalized)
+		out = append(out, name)
 	}
-	return out
+	return normalizeStringList(out)
 }
 
 func defaultCandidates() []string {

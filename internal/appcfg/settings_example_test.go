@@ -10,10 +10,10 @@ import (
 )
 
 type persistedSettings struct {
-	ApplyToAllFiles bool         `json:"apply_to_all_files"`
-	SkipPaths       []string     `json:"skip_paths"`
-	Middlewares     []Middleware `json:"middlewares"`
-	CandidatesFile  string       `json:"candidates_file"`
+	ApplyToAllFiles  bool     `json:"apply_to_all_files"`
+	SkipPaths        []string `json:"skip_paths"`
+	AvailablePlugins []string `json:"available_plugins"`
+	CandidatesFile   string   `json:"candidates_file"`
 }
 
 func TestDefaultSettingsMatchExample(t *testing.T) {
@@ -35,10 +35,10 @@ func TestDefaultSettingsMatchExample(t *testing.T) {
 
 	def := DefaultSettings()
 	got := persistedSettings{
-		ApplyToAllFiles: def.ApplyToAllFiles,
-		SkipPaths:       def.SkipPaths,
-		Middlewares:     def.Middlewares,
-		CandidatesFile:  def.CandidatesFile,
+		ApplyToAllFiles:  def.ApplyToAllFiles,
+		SkipPaths:        def.SkipPaths,
+		AvailablePlugins: def.AvailablePlugins,
+		CandidatesFile:   def.CandidatesFile,
 	}
 	if !reflect.DeepEqual(got, example) {
 		t.Fatalf("default settings mismatch\nwant: %+v\ngot:  %+v", example, got)
