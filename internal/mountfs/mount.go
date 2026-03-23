@@ -21,7 +21,11 @@ import (
 	"llmfs/internal/transform"
 )
 
-func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
+type MountOptions struct {
+	Overlay *OverlayAdapter
+}
+
+func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings, options MountOptions) error {
 	_, cdc, err := codec.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", cfgPath, err)
@@ -48,8 +52,8 @@ func Mount(root, mountpoint, cfgPath string, settings appcfg.Settings) error {
 	}
 
 	rootData := &fs.LoopbackRoot{Path: root}
-	rootData.NewNode = newTransNode(rootData, pipeline, settings.ApplyToAllFiles)
-	rootNode := newTransNode(rootData, pipeline, settings.ApplyToAllFiles)(rootData, nil, "", nil)
+	rootData.NewNode = newTransNode(rootData, pipeline, settings.ApplyToAllFiles, options.Overlay)
+	rootNode := newTransNode(rootData, pipeline, settings.ApplyToAllFiles, options.Overlay)(rootData, nil, "", nil)
 
 	sec := time.Second
 	opts := &fs.Options{

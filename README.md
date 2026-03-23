@@ -13,6 +13,7 @@ LLMs are priced and limited by tokens, not bytes. `llmfs` tries to reduce token 
   - `tce1`: human-readable escape+code format
   - `tce2`: compact symbol-based format (default)
 - FUSE mount that exposes encoded file content and decodes writes back to raw files
+- Optional overlay-backed mounts for isolated edit sessions
 - Auto-generated LLM instructions file with dictionary mapping
 - Config-driven behavior for candidate patterns and skipped directories
 - Ordered middleware pipeline for pre-serve checks/transforms
@@ -68,10 +69,11 @@ Use `.llmfs/mount` (or your chosen mountpoint) as the path you expose to your LL
 
 ```bash
 llmfs                             # same as: llmfs run --mountpoint .llmfs/mount
+llmfs overlay                     # mount current dir at ./.llmfs/<session-id> (overlay storage)
 llmfs explore [--root DIR] [--settings PATH]
 llmfs init [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
-llmfs mount [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
-llmfs run [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
+llmfs mount [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH] [--storage direct|overlay] [--overlay-root DIR] [--overlay-session ID]
+llmfs run [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH] [--storage direct|overlay] [--overlay-root DIR] [--overlay-session ID]
 llmfs encode [--config PATH] [--in FILE] [--out FILE]
 llmfs decode [--config PATH] [--in FILE] [--out FILE]
 llmfs version
@@ -88,6 +90,38 @@ llmfs version
 
 # Start mount
 ./llmfs run --root . --mountpoint /tmp/repo-encoded
+
+# Start overlay-backed mount (writes stay in overlay session storage)
+./llmfs run --root . --storage overlay
+
+# Simplest isolated overlay mount for current dir
+./llmfs overlay
+```
+
+### Overlay storage mode
+
+Use `--storage overlay` to isolate mount writes from the base repository. In this mode:
+
+- Writes are stored under an overlay session root (default: `<root>/.llmfs/overlays/<session-id>`)
+- If you keep the default mountpoint, `llmfs` auto-selects `.llmfs/mounts/<session-id>`
+- You can control location and session naming with:
+  - `--overlay-root DIR`
+  - `--overlay-session ID`
+
+Examples:
+
+```bash
+# New auto-named session under ./.llmfs/overlays
+./llmfs run --root . --storage overlay
+
+# Simplest mode: mount current dir and print ./.llmfs/<session-id>
+./llmfs overlay
+
+# Stable named session
+./llmfs run --root . --storage overlay --overlay-session review-001
+
+# Custom overlay storage root
+./llmfs run --root . --storage overlay --overlay-root /tmp/llmfs-overlays
 ```
 
 ## Configuration

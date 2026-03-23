@@ -27,6 +27,8 @@ func Run(args []string, version string) error {
 		return runExplore(args[2:], false)
 	case "init":
 		return runExplore(args[2:], true)
+	case "overlay":
+		return runOverlay(args[2:])
 	case "mount", "run":
 		return runMount(args[2:])
 	case "version":
@@ -47,10 +49,11 @@ func usage() {
 
 Usage:
   llmfs                             (same as: llmfs run, default mountpoint .llmfs/mount)
+  llmfs overlay                     (mount current dir at ./.llmfs/<session-id> using overlay storage)
   llmfs explore [-v] [--root DIR] [--settings PATH]
   llmfs init [-v] [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
-  llmfs mount [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
-  llmfs run [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH]
+  llmfs mount [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH] [--storage direct|overlay]
+  llmfs run [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH] [--storage direct|overlay]
   llmfs version
   llmfs encode [--config PATH] [--in FILE] [--out FILE]
   llmfs decode [--config PATH] [--in FILE] [--out FILE]
@@ -124,6 +127,9 @@ func runMount(args []string) error {
 	mountpoint := fs.String("mountpoint", setup.DefaultMountpoint, "mount destination")
 	configPath := fs.String("config", setup.DefaultConfigPath, "config path")
 	settingsPath := fs.String("settings", setup.DefaultSettings, "settings file path")
+	storage := fs.String("storage", "direct", "storage backend: direct or overlay")
+	overlayRoot := fs.String("overlay-root", ".llmfs/overlays", "overlay sessions root directory")
+	overlaySession := fs.String("overlay-session", "", "overlay session id (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -135,8 +141,51 @@ func runMount(args []string) error {
 	if err := ensureConfig(*root, *configPath, settings, *verbose); err != nil {
 		return err
 	}
+	var mountOptions mountfs.MountOptions
+	switch strings.ToLower(strings.TrimSpace(*storage)) {
+	case "direct":
+	case "overlay":
+		adapter, err := mountfs.NewOverlayAdapter(*root, *overlayRoot, *overlaySession)
+		if err != nil {
+			return err
+		}
+		mountOptions.Overlay = adapter
+		if *mountpoint == setup.DefaultMountpoint {
+			*mountpoint = filepath.Join(".llmfs", "mounts", adapter.SessionID())
+		}
+		fmt.Printf("Overlay session: %s (%s)\n", adapter.SessionID(), adapter.SessionRoot())
+	default:
+		return fmt.Errorf("invalid --storage value %q (expected direct or overlay)", *storage)
+	}
 	fmt.Printf("Mounting encoded view of %s at %s\n", *root, *mountpoint)
-	return mountfs.Mount(*root, *mountpoint, *configPath, settings)
+	return mountfs.Mount(*root, *mountpoint, *configPath, settings, mountOptions)
+}
+
+func runOverlay(args []string) error {
+	fs := flag.NewFlagSet("overlay", flag.ContinueOnError)
+	verbose := fs.Bool("v", false, "verbose progress (print each scanned file)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	root := "."
+	configPath := setup.DefaultConfigPath
+	settingsPath := setup.DefaultSettings
+	settings, err := setup.LoadSettings(root, settingsPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureConfig(root, configPath, settings, *verbose); err != nil {
+		return err
+	}
+
+	adapter, err := mountfs.NewOverlayAdapter(root, ".llmfs/overlays", "")
+	if err != nil {
+		return err
+	}
+	mountpoint := filepath.Join(".llmfs", adapter.SessionID())
+	fmt.Printf("./%s\n", strings.TrimPrefix(filepath.ToSlash(mountpoint), "./"))
+	return mountfs.Mount(root, mountpoint, configPath, settings, mountfs.MountOptions{Overlay: adapter})
 }
 
 func ensureConfig(root, configPath string, settings appcfg.Settings, verbose bool) error {
