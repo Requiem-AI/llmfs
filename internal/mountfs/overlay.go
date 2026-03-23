@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fs"
 )
 
@@ -79,7 +80,7 @@ func NewOverlayAdapter(baseRoot, overlaysRoot, sessionID string) (*OverlayAdapte
 		overlaysAbs = filepath.Join(baseAbs, overlaysRoot)
 	}
 	if strings.TrimSpace(sessionID) == "" {
-		sessionID = fmt.Sprintf("mnt-%d", time.Now().UnixNano())
+		sessionID = uuid.NewString()
 	}
 	sessionID = sanitizeSessionID(sessionID)
 	if sessionID == "" {

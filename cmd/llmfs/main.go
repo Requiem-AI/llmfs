@@ -4,23 +4,13 @@ import (
 	"fmt"
 	"os"
 
-	commonctx "github.com/alphabatem/common/context"
-
-	"llmfs/internal/harness"
+	"llmfs/internal/app"
 )
 
 var version = "dev"
 
 func main() {
-	ctx, err := commonctx.NewCtx(&harness.CLIService{
-		Args:    os.Args,
-		Version: version,
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
-	if err := ctx.Run(); err != nil {
+	if err := app.Run(os.Args, version); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

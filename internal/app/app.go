@@ -27,6 +27,8 @@ func Run(args []string, version string) error {
 		return runExplore(args[2:], false)
 	case "init":
 		return runExplore(args[2:], true)
+	case "overlay":
+		return runOverlay(args[2:])
 	case "mount", "run":
 		return runMount(args[2:])
 	case "version":
@@ -47,6 +49,7 @@ func usage() {
 
 Usage:
   llmfs                             (same as: llmfs run, default mountpoint .llmfs/mount)
+  llmfs overlay                     (mount current dir at ./.llmfs/<session-id> using overlay storage)
   llmfs explore [-v] [--root DIR] [--settings PATH]
   llmfs init [-v] [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
   llmfs mount [-v] [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH] [--storage direct|overlay]
@@ -156,6 +159,33 @@ func runMount(args []string) error {
 	}
 	fmt.Printf("Mounting encoded view of %s at %s\n", *root, *mountpoint)
 	return mountfs.Mount(*root, *mountpoint, *configPath, settings, mountOptions)
+}
+
+func runOverlay(args []string) error {
+	fs := flag.NewFlagSet("overlay", flag.ContinueOnError)
+	verbose := fs.Bool("v", false, "verbose progress (print each scanned file)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	root := "."
+	configPath := setup.DefaultConfigPath
+	settingsPath := setup.DefaultSettings
+	settings, err := setup.LoadSettings(root, settingsPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureConfig(root, configPath, settings, *verbose); err != nil {
+		return err
+	}
+
+	adapter, err := mountfs.NewOverlayAdapter(root, ".llmfs/overlays", "")
+	if err != nil {
+		return err
+	}
+	mountpoint := filepath.Join(".llmfs", adapter.SessionID())
+	fmt.Printf("./%s\n", strings.TrimPrefix(filepath.ToSlash(mountpoint), "./"))
+	return mountfs.Mount(root, mountpoint, configPath, settings, mountfs.MountOptions{Overlay: adapter})
 }
 
 func ensureConfig(root, configPath string, settings appcfg.Settings, verbose bool) error {

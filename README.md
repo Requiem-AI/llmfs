@@ -69,6 +69,7 @@ Use `.llmfs/mount` (or your chosen mountpoint) as the path you expose to your LL
 
 ```bash
 llmfs                             # same as: llmfs run --mountpoint .llmfs/mount
+llmfs overlay                     # mount current dir at ./.llmfs/<session-id> (overlay storage)
 llmfs explore [--root DIR] [--settings PATH]
 llmfs init [--root DIR] [--config PATH] [--instructions PATH] [--settings PATH]
 llmfs mount [--mountpoint DIR] [--root DIR] [--config PATH] [--settings PATH] [--storage direct|overlay] [--overlay-root DIR] [--overlay-session ID]
@@ -92,6 +93,9 @@ llmfs version
 
 # Start overlay-backed mount (writes stay in overlay session storage)
 ./llmfs run --root . --storage overlay
+
+# Simplest isolated overlay mount for current dir
+./llmfs overlay
 ```
 
 ### Overlay storage mode
@@ -109,6 +113,9 @@ Examples:
 ```bash
 # New auto-named session under ./.llmfs/overlays
 ./llmfs run --root . --storage overlay
+
+# Simplest mode: mount current dir and print ./.llmfs/<session-id>
+./llmfs overlay
 
 # Stable named session
 ./llmfs run --root . --storage overlay --overlay-session review-001
